@@ -1,0 +1,299 @@
+---
+title: "20220117_BaselinePostFollowup_Phase2"
+output: html_document
+---
+### Load Packages
+```{r}
+library(tidyverse) # data wrangling
+library(dplyr) #data wrangling
+library(lme4) # mixed models
+library(ggpubr) # plots
+library(readr) # read csv
+```
+
+### Load Dataset
+```{r}
+filename <- "20230313_phase2data.csv"
+
+data <- read_csv(filename, col_types = cols(id = col_character()))
+```
+
+```{r}
+data <- filter(data, group != "2") # remove Group
+
+data$id <- factor(data$id) 
+data$event <- factor(data$event, labels = c("baseline", "post", "followup"))
+data$group <- factor(data$group, labels = c("control", "treatment"))
+
+view(data)
+```
+
+### Coded Variables
+**Event**
+1 - Baseline
+2 - Post
+3 - Followup
+
+**Group**
+0 - Waitlist Control
+1 - MBMS Enrollment
+2 - Group
+
+# Descriptive Statistics #
+
+```{r}
+library(psych)
+describe(data[,4:9])
+```
+
+```{r}
+data_baseline <- filter(data, event == "baseline")
+
+data_baseline %>%
+  group_by(group)%>%
+  get_summary_stats(type = "mean_sd")
+
+data_baseline%>%
+  get_summary_stats(type = "mean_sd")
+```
+
+```{r}
+#BDI clinical significance (score >= 20)
+bdi_wlc_sig <- which(data_baseline$bdi >=20 & data_baseline$group == 0) #wlc group
+bdi_wlc_n <- length(bdi_wlc_sig)
+bdi_wlc_perc <- (bdi_wlc_n/16) * 100
+bdi_wlc_perc
+
+bdi_ie_sig <- which(data_baseline$bdi >=20 & data_baseline$group == 1) #ie group
+bdi_ie_n <- length(bdi_ie_sig)
+bdi_ie_perc <- (bdi_ie_n/17) * 100
+bdi_ie_perc
+
+((bdi_wlc_n + bdi_ie_n)/33)*100 #total
+
+#BAI clinical significance (score >= 16)
+bai_wlc_sig <- which(data_baseline$bai >=16 & data_baseline$group == 0) #wlc group
+bai_wlc_n <- length(bai_wlc_sig)
+bai_wlc_perc <- (bai_wlc_n/16) * 100
+bai_wlc_perc
+
+bai_ie_sig <- which(data_baseline$bai >=16 & data_baseline$group == 1) #ie group
+bai_ie_n <- length(bai_ie_sig)
+bai_ie_perc <- (bai_ie_n/17) * 100
+bai_ie_perc
+
+((bai_wlc_n + bai_ie_n)/33)*100 #total
+```
+
+## Normality & Distributions
+### Create Boxplot for each variable
+```{r}
+bxp_ryff <- ggboxplot(data, x = "event", y = "ryff", add = "point")
+bxp_ryff
+
+bxp_pss <- ggboxplot(data, x = "event", y = "pss", add = "point")
+bxp_pss
+
+bxp_bdi <- ggboxplot(data, x = "event", y = "bdi", add = "point")
+bxp_bdi
+
+bxp_bai <- ggboxplot(data, x = "event", y = "bai", add = "point")
+bxp_bai
+
+bxp_mi <- ggboxplot(data, x = "event", y = "fmqi", add = "point")
+bxp_mi
+
+bxp_cerq <- ggboxplot(data, x = "event", y = "cerq", add = "point")
+bxp_cerq
+```
+
+###Create QQ plot for each variable
+```{r}
+qq_ryff <- ggqqplot(data, "ryff", facet.by = "event")
+qq_ryff
+qq_pss <- ggqqplot(data, "pss", facet.by = "event")
+qq_pss
+qq_bdi <- ggqqplot(data, "bdi", facet.by = "event")
+qq_bdi
+qq_bai <- ggqqplot(data, "bai", facet.by = "event")
+qq_bai
+qq_mi <- ggqqplot(data, "fmqi", facet.by = "event")
+qq_mi
+qq_cerq <- ggqqplot(data, "cerq", facet.by = "event")
+qq_cerq
+```
+###Check for outliers
+```{r}
+library(rstatix)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(ryff)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(pss)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(bdi)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(bai)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(fmqi)
+
+data %>%
+  group_by(event) %>%
+  identify_outliers(cerq)
+
+```
+no extreme outliers found
+
+###Check normality Assumption
+```{r}
+data %>%
+  group_by(event) %>%
+  shapiro_test(ryff)
+
+data %>%
+  group_by(event) %>%
+  shapiro_test(pss)
+
+data %>%
+  group_by(event) %>%
+  shapiro_test(bdi)
+
+data %>%
+  group_by(event) %>%
+  shapiro_test(bai)
+
+data %>%
+  group_by(event) %>%
+  shapiro_test(fmqi)
+
+data %>%
+  group_by(event) %>%
+  shapiro_test(cerq)
+```
+Nonnormal: BDI @ baseline, post
+           BAI @ baseline, post, followup
+           MI @ followup
+           CERQ @ post
+          
+# Primary Analysis #
+
+
+```{r}
+# run without 12032 and 12046 (not missing at random) 
+data_01 <- filter(data, id != 12032)
+data_01 <- filter(data, id != 12046)
+```
+
+```{r}
+ryff_mm <- lmer(ryff ~ event * group + (1|id), data=data)
+anova(ryff_mm)
+summary(ryff_mm)
+```
+
+```{r}
+ryff_mm <- lmer(ryff ~ event * group + (1|id), data=data_01)
+anova(ryff_mm)
+summary(ryff_mm)
+```
+
+```{r}
+pss_mm <- lmer(pss ~ event * group + (1|id), data=data)
+anova(pss_mm)
+summary(pss_mm)
+```
+
+```{r}
+pss_mm <- lmer(pss ~ event * group + (1|id), data=data_01)
+anova(pss_mm)
+summary(pss_mm)
+```
+
+```{r}
+bdi_mm <- lmer(bdi ~ event + group + event * group + (1|id), data=data)
+anova(bdi_mm)
+summary(bdi_mm)
+```
+
+```{r}
+bdi_mm <- lmer(bdi ~ event + group + event * group + (1|id), data=data_01)
+anova(bdi_mm)
+summary(bdi_mm)
+```
+
+```{r}
+bai_mm <- lmer(bai ~ event + group + event * group + (1|id), data=data)
+anova(bai_mm)
+summary(bai_mm)
+```
+
+```{r}
+bai_mm <- lmer(bai ~ event + group + event * group + (1|id), data=data_01)
+anova(bai_mm)
+summary(bai_mm)
+```
+
+```{r}
+mi_mm <- lmer(fmqi ~ event + group + event * group + (1|id), data=data)
+anova(mi_mm)
+summary(mi_mm)
+```
+
+```{r}
+mi_mm <- lmer(fmqi ~ event + group + event * group + (1|id), data=data_01)
+anova(mi_mm)
+summary(mi_mm)
+```
+
+```{r}
+cerq_mm <- lmer(cerq ~ event + group + event * group + (1|id), data=data)
+anova(cerq_mm)
+summary(cerq_mm)
+```
+
+```{r}
+cerq_mm <- lmer(cerq ~ event + group + event * group + (1|id), data=data_01)
+anova(cerq_mm)
+summary(cerq_mm)
+```
+
+## MLM Plots
+
+```{r}
+ggplot(data, aes(x = event, y = ryff)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("wellbeing") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```
+```{r}
+ggplot(data, aes(x = event, y = pss)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("stress") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```
+```{r}
+ggplot(data, aes(x = event, y = bdi)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("depression") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```
+```{r}
+ggplot(data, aes(x = event, y = bai)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("anxiety") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```
+```{r}
+ggplot(data, aes(x = event, y = fmqi)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("mindfulness") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```
+```{r}
+ggplot(data, aes(x = event, y = cerq)) + 
+  stat_summary(aes(group=group, color=group), geom="line", size=2, fun.y = mean) +
+  ylab("cognitive emotion") + xlab("") + scale_color_manual(values = c("lightblue3","darkblue"))
+```

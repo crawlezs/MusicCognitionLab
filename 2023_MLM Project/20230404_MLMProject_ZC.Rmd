@@ -1,0 +1,1879 @@
+---
+title: "20230327_MLMProject_ZC"
+output: html_document
+date: "2023-03-27"
+---
+# SET UP
+```{r}
+# load packages
+library(tidyverse) #data wrangling
+library(dplyr) # data wrangling
+library(ggpubr) # plotting
+library(readr) # read_csv
+library(psych) # psych statistics - MSSD
+library(lme4) # mixed models
+library(effectsize) #effect size functions
+library(EMAtools) #effect size functions
+library(lubridate) #time variables
+library(tseries) #time series tools
+```
+
+# EMA
+```{r}
+filename <- "20230321_EMAData.csv"
+
+EMAdata <- read_csv(filename)
+```
+```{r}
+filename <- "20230327_betweenday.csv"
+
+betweenday <- read_csv(filename)
+```
+
+```{r}
+#transform variables to factor
+EMAdata$id <- as.factor(EMAdata$id)
+EMAdata$event <- as.factor(EMAdata$event) 
+levels(EMAdata$event) <- c("Baseline", "Session 4", "Post")
+EMAdata$enrollmentgroup <- as.factor(EMAdata$enrollmentgroup) 
+levels(EMAdata$enrollmentgroup) <- c("Waitlist Control", "Immediate Enrollment", "Group")
+```
+
+## Descriptive Statistics
+```{r}
+#remove group 2
+EMAdata <- filter(EMAdata, enrollmentgroup != "Group")
+```
+
+### Missing Data
+
+Missing Instances
+```{r}
+#create dataframe of missing instances (completed = 0)
+missingdata <- filter(EMAdata, completed == '0')
+```
+
+```{r}
+#create table of n missing: event x group
+missing_instance <- matrix(0, 4,4)
+
+colnames(missing_instance) <- c("Baseline", "Session4", "Post", "Total")
+rownames(missing_instance) <- c("WLC", "IE", "Group", "Total")
+```
+
+```{r}
+missing_instance[1,1] <- length(which(missingdata$event == "baseline" & missingdata$enrollmentgroup == "0"))
+missing_instance[2,1] <- length(which(missingdata$event == "baseline" & missingdata$enrollmentgroup == "1"))
+missing_instance[3,1] <- length(which(missingdata$event == "baseline" & missingdata$enrollmentgroup == "2"))
+missing_instance[1,2] <- length(which(missingdata$event == "session4" & missingdata$enrollmentgroup == "0"))
+missing_instance[2,2] <- length(which(missingdata$event == "session4" & missingdata$enrollmentgroup == "1"))
+missing_instance[3,2] <- length(which(missingdata$event == "session4" & missingdata$enrollmentgroup == "2"))
+missing_instance[1,3] <- length(which(missingdata$event == "post" & missingdata$enrollmentgroup == "0"))
+missing_instance[2,3] <- length(which(missingdata$event == "post" & missingdata$enrollmentgroup == "1"))
+missing_instance[3,3] <- length(which(missingdata$event == "post" & missingdata$enrollmentgroup == "2"))
+
+missing_instance[1,4] <- length(which(missingdata$enrollmentgroup == "0"))
+missing_instance[2,4] <- length(which(missingdata$enrollmentgroup == "1"))
+missing_instance[3,4] <- length(which(missingdata$enrollmentgroup == "2"))
+
+missing_instance[4,1] <- length(which(missingdata$event == "baseline"))
+missing_instance[4,2] <- length(which(missingdata$event == "session4"))
+missing_instance[4,3] <- length(which(missingdata$event == "post"))
+missing_instance[4,4] <- missing_instance[4,1] + missing_instance[4,2] + missing_instance[4,3]
+```
+
+Missing Items
+```{r}
+#create dataframe of missing items (completed =1, N/A on at least 1 item)
+missingitems <- filter(EMAdata, completed == "1" & (is.na(positive_score) | is.na(negative_score))) #n=9
+```
+
+```{r}
+#impute missing items using the average of other neg/pos items
+## create function
+
+#function inputs: ID, EVENT, INSTANCE
+itemavg <- function(ID, EVENT, INSTANCE){
+
+  # row from id, event, instance
+  r <- which(EMAdata$id == ID & EMAdata$event == EVENT & EMAdata$instance == INSTANCE)  
+  
+  positems <- c()
+  negitems <- c()
+
+  #positive items: 1, 3, 5, 9, 10, 12, 14, 16, 17, 19
+  positems <- append(positems, as.integer(EMAdata[r,15])) #posq1
+  positems <- append(positems, as.integer(EMAdata[r,17])) #posq3
+  positems <- append(positems, as.integer(EMAdata[r,19]))#posq5
+  positems <- append(positems, as.integer(EMAdata[r,23]))#posq9
+  positems <- append(positems, as.integer(EMAdata[r,24])) #posq10
+  positems <- append(positems, as.integer(EMAdata[r,26])) #posq12
+  positems <- append(positems, as.integer(EMAdata[r,28])) #posq14
+  positems <- append(positems, as.integer(EMAdata[r,30])) #posq16
+  positems <- append(positems, as.integer(EMAdata[r,31])) #posq17
+  positems <- append(positems, as.integer(EMAdata[r,33])) #posq19
+
+  posavg <- mean(positems, na.rm=TRUE)
+
+  #negative items: 2, 4, 6, 7, 8, 11, 13, 15, 18, 20
+  negitems <- append(negitems,  as.integer(EMAdata[r,16])) #negq2
+  negitems <- append(negitems, as.integer(EMAdata[r,18])) #negq4
+  negitems <- append(negitems, as.integer(EMAdata[r,20])) #negq6
+  negitems <- append(negitems, as.integer(EMAdata[r,21])) #negq7
+  negitems <- append(negitems, as.integer(EMAdata[r,22])) #negq8
+  negitems <- append(negitems, as.integer(EMAdata[r,25])) #negq11
+  negitems <- append(negitems, as.integer(EMAdata[r,27])) #negq13
+  negitems <- append(negitems, as.integer(EMAdata[r,29])) #negq15
+  negitems <- append(negitems, as.integer(EMAdata[r,32])) #negq18
+  negitems <- append(negitems, as.integer(EMAdata[r,34])) #negq20
+  
+  negavg <- mean(negitems, na.rm=TRUE)
+  
+  #output posavg, negavg
+  out <- list(r, posavg, negavg)
+  
+  return(out)
+}  
+```
+
+```{r}
+#add all positive items
+posscore <- function(r){
+  score <- as.integer(EMAdata[r, 15]) + as.integer(EMAdata[r, 17]) + 
+    as.integer(EMAdata[r, 19]) + as.integer(EMAdata[r, 23]) +
+    as.integer(EMAdata[r, 24]) + as.integer(EMAdata[r, 26]) + 
+    as.integer(EMAdata[r, 28]) + as.integer(EMAdata[r, 30]) + 
+    as.integer(EMAdata[r, 31]) + as.integer(EMAdata[r, 33])
+  
+  return(score)
+}
+
+#add all negative items  
+negscore <- function(r){
+  score <- as.integer(EMAdata[r, 16]) + as.integer(EMAdata[r, 18]) + 
+    as.integer(EMAdata[r, 20]) + as.integer(EMAdata[r, 21]) +
+    as.integer(EMAdata[r, 22]) + as.integer(EMAdata[r, 25]) + 
+    as.integer(EMAdata[r, 27]) + as.integer(EMAdata[r, 29]) + 
+    as.integer(EMAdata[r, 32]) + as.integer(EMAdata[r, 34])
+  
+  return(score)
+}
+  
+```
+
+```{r}
+#12015 session 4:8
+out<- itemavg("12015", "Session 4", 8)
+EMAdata[23, 17] <- out[2] #posq3 
+EMAdata[23, 23] <- out[2] #posq9 
+EMAdata[23,11] <- posscore(23) #positive score
+
+#12015 session4: 12
+out<- itemavg("12015", "Session 4", 12)
+EMAdata[27, 25] <- out[3] #negq11
+EMAdata[27,12] <- negscore(27) #negative score
+
+#12017 post: 3
+out <- itemavg("12017", "Post", 3)
+EMAdata[123, 30] <- out[2] #posq16
+EMAdata[123, 11] <- posscore(123)
+
+#12027 baseline:2
+out <- itemavg("12027", "Baseline", 2)
+EMAdata[542, 28] <- out[2] #posq14
+EMAdata[542, 11] <- posscore(542)
+
+#12027 session4:12
+out <- itemavg("12027", "Session 4", 12)
+EMAdata[567, 22] <- out[3] #neg8
+EMAdata[567, 27] <- out[3] #neg13
+EMAdata[567,12] <- negscore(567)
+
+#12033 baseline:15
+out<- itemavg("12033", "Baseline", 15)
+EMAdata[810, 24] <- out[2] #pos10
+EMAdata[810, 11] <- posscore(810)
+
+#12033 session4:11
+out<- itemavg("12033", "Session 4", 11)
+EMAdata[821, 30] <- out[2] #posq16
+EMAdata[821, 11] <- posscore(821)
+
+#12039 post:2
+out<- itemavg("12039", "Post", 2)
+EMAdata[1097, 31] <- out[2] #posq17
+EMAdata[1097,11] <- posscore(1097)
+
+#12039 post:3
+out<- itemavg("12039", "Post", 3)
+EMAdata[1098, 28] <- out[2] #posq14
+EMAdata[1098, 34] <- out[3] #neg20
+EMAdata[1098, 11] <- posscore(1098)
+EMAdata[1098, 12] <- negscore(1098)
+```
+
+```{r}
+#check missing items (completed =1, N/A on at least 1 item)
+missingitems <- filter(EMAdata, completed == "1" & (is.na(positive_score) | is.na(negative_score))) #n=9
+```
+
+### Survey Completion
+
+Compliance Rate
+
+```{r}
+#create dataframe of id x completion
+compliance_rate <- matrix(0, 35, 3)
+
+colnames(compliance_rate) <- c("Group", "Completed", "ComplianceRate")
+id_names <- c("12015", "12016", "12017", "12018", "12019", "12020","12021", "12022", "12023", "12024","12025", "12026", "12027", "12028", "12029", "12030", "12031", "12032", "12033", "12034", "12035", "12036", "12037", "12038", "12039", "12040", "12041","12043", "12044", "12045", "12048","12050", "12055","12056", "12057")
+rownames(compliance_rate) <- id_names
+```
+
+```{r}
+#fill matrix col 1 with enrollment group
+r = 1
+n = 1
+
+for(n in 1:35){
+  ind <- which(EMAdata$id == id_names[n])
+  compliance_rate[r,1] <- EMAdata$enrollmentgroup[ind[1]]
+  r <- r + 1
+  n <- n + 1
+}
+
+```
+
+```{r}
+#fill matrix col 2 with n completed by id
+r = 1
+n = 1
+
+for(n in 1:35){
+  compliance_rate[r,2] <- length(which(EMAdata$id == id_names[n]))
+  r <- r + 1
+  n <- n + 1
+  }
+```
+
+```{r}
+#fill matrix col 3 with compliance rate
+r = 1
+n = 1
+
+for (n in 1:35){
+  compliance_rate[r, 3] <- compliance_rate[r, 2]/45
+  r <- r + 1
+  n <- n + 1
+}
+```
+
+```{r}
+#output min and max values
+max <- which(compliance_rate == max(compliance_rate[,3]), arr.ind=TRUE)
+min <- which(compliance_rate == min(compliance_rate[,3]), arr.ind=TRUE)
+
+print(paste("Maximum compliance rate:", compliance_rate[max[1]]))
+print(paste("Minimum compliance rate:", compliance_rate[min]))
+```
+
+### Mean (SD) Table
+```{r}
+summarise_at(EMAdata, vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+
+```{r}
+#group by event
+EMAdata%>%
+  group_by(event) %>%
+  summarise_at(vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+
+```{r}
+#group by enrollment
+EMAdata%>%
+  group_by(enrollmentgroup) %>%
+  summarise_at(vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+### Normality & Distribution
+```{r}
+#create grouped boxplot - positive
+
+ggplot(EMAdata, aes(x=event, y=positive_score, fill=enrollmentgroup)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("score") + ggtitle("PANAS Positive Score x Group")
+```
+
+```{r}
+#create grouped boxplot - negative
+
+ggplot(EMAdata, aes(x=event, y=negative_score, fill=enrollmentgroup)) + 
+  scale_fill_manual(values = c("lightblue3", "dodgerblue4")) +
+  geom_boxplot() + xlab("event") + ylab("score") +
+  ggtitle("PANAS Negative Score x Group")
+```
+## Affect Dynamic Variables
+
+```{r}
+withinday <- EMAdata[,c('id', 'event', 'day', 'instance', 'enrollmentgroup', 'time_interval', 'positive_score', 'negative_score', "positive_SD","negative_SD")]
+```
+
+```{r}
+#convert time_interval from h:m:s to minutes
+withinday$time_interval_min <- hour(withinday$time_interval)*60 + minute(withinday$time_interval)
+
+withinday <- withinday %>%
+  relocate("time_interval_min", .after="time_interval")
+```
+
+```{r}
+# scatter plot of ASD x time interval (hour)
+ggplot(withinday, aes(x = time_interval, y=positive_SD)) + geom_point(size = 0.5) +
+  ggtitle("Successive Difference - Positive")
+  
+ggplot(withinday, aes(x = time_interval, y=negative_SD)) + geom_point(size = 0.5) +
+  ggtitle("Successive Difference - Negative")
+```
+
+```{r}
+#ASD = positive_SD[i] / time_interval[i]
+pos_ASD <- vector()
+
+for(i in 1:1427){
+  pos_ASD <- append(pos_ASD, c(withinday$positive_SD[i] / withinday$time_interval_min[i]))
+  
+  i = i + 1
+}
+
+head(pos_ASD)
+```
+
+```{r}
+#create positive ASD variable
+withinday$positive_ASD <- pos_ASD
+```
+
+```{r}
+neg_ASD <- vector()
+
+for(i in 1:1427){
+  neg_ASD <- append(neg_ASD, c(withinday$negative_SD[i] / withinday$time_interval_min[i]))
+  
+  i = i + 1
+}
+
+head(neg_ASD)
+```
+
+```{r}
+#create negative ASD variable
+withinday$negative_ASD <- neg_ASD
+```
+
+```{r}
+# scatter plot of ASD x time interval (hour)
+ggplot(withinday, aes(x = time_interval, y=positive_ASD)) + geom_point(size = 0.5) +
+  ggtitle("Adj. Successive Difference - Positive")
+  
+ggplot(withinday, aes(x = time_interval, y=negative_ASD)) + geom_point(size = 0.5) +
+  ggtitle("Adj. Successive Difference - Negative")
+```
+
+```{r}
+betweenday <- filter(betweenday, betweenday$id != "12046")
+  
+#split betweenday df by event
+betweenday_baseline <- filter(betweenday, betweenday$event == "1")
+betweenday_session4 <- filter(betweenday, betweenday$event == "2")
+betweenday_post <- filter(betweenday, betweenday$event == "3")
+```
+
+```{r}
+#remove group 2 & 12046 (no between data)
+id_names <- c("12015", "12016", "12017", "12018", "12019", "12020","12021", "12022", "12023", "12024","12025", "12026", "12027", "12028", "12029", "12030", "12031", "12032", "12033", "12034", "12035", "12036", "12037", "12038", "12039", "12040", "12041","12043", "12044", "12045", "12050", "12057")
+
+length(id_names)
+
+id_group <- c("1", "1", "0", "1", "0", "1", "0", "0", "1", "1", "0", "1", "0", "0", "0", "0", "1", "1", "1", "0", "1", "0", "0", "1", "1", "0", "0", "1", "0", "1","1", "1")
+
+length(id_group)
+```
+
+### Mean 
+
+```{r}
+# initialize MEAN matrix
+ema_mean <- matrix(0, 32, 7)
+
+colnames(ema_mean) <- c("group", "posbaseline", "possession4", "pospost", "negbaseline", "negsession4", "negpost")
+rownames(ema_mean) <- id_names
+
+for(i in 1:32){
+  ema_mean[i,1] <- id_group[i]
+}
+```
+
+```{r}
+#fill positive mean
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_baseline$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_baseline$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,2] <- mean(vec)
+}
+
+## session4
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_session4$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_session4$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,3] <- mean(vec)
+}
+
+## post
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_post$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_post$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,4] <- mean(vec)
+}
+```
+
+```{r}
+#fill negative mean
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_baseline$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_baseline$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,5] <- mean(vec)
+}
+
+## session4
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_session4$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_session4$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,6] <- mean(vec)
+}
+
+## post
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_post$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_post$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_mean[i,7] <- mean(vec)
+}
+```
+
+```{r}
+ema_mean <- as.data.frame(ema_mean)
+ema_mean$posbaseline <- as.numeric(ema_mean$posbaseline)
+ema_mean$possession4 <- as.numeric(ema_mean$possession4)
+ema_mean$pospost <- as.numeric(ema_mean$pospost)
+ema_mean$negbaseline <- as.numeric(ema_mean$negbaseline)
+ema_mean$negsession4 <- as.numeric(ema_mean$negsession4)
+ema_mean$negpost <- as.numeric(ema_mean$negpost)
+```
+
+```{r}
+#group by group
+ema_mean%>%
+  group_by(group) %>%
+  summarise_at(vars(posbaseline, possession4, pospost, negbaseline, negsession4, negpost, ), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+#### Plots
+```{r}
+#create id variable
+ema_mean$id <- id_names
+  
+#reformat data: baseline
+ema_mean_baseline <- ema_mean %>%
+  dplyr::select(id, group, pos = posbaseline, neg = negbaseline)
+
+#create time variable
+ema_mean_baseline$time <- as.integer(1)
+ema_mean_baseline <- relocate(ema_mean_baseline, time, .before=group)
+```
+
+```{r}
+#reformat data: session4
+ema_mean_session4 <- ema_mean %>%
+  dplyr::select(id, group, pos = possession4, neg = negsession4)
+
+#create time variable
+ema_mean_session4$time <- as.integer(2)
+ema_mean_session4 <- relocate(ema_mean_session4, time, .before=group)
+```
+
+```{r}
+#reformat data: post
+ema_mean_post <- ema_mean %>%
+  dplyr::select(id, group, pos = pospost, neg = negpost)
+
+#create time variable
+ema_mean_post$time <- as.integer(3)
+ema_mean_post<- relocate(ema_mean_post, time, .before=group)
+```
+
+```{r}
+#join predata and postdata
+ema_mean2 <- merge(ema_mean_baseline, ema_mean_session4, all=TRUE)
+ema_mean2 <- merge(ema_mean2, ema_mean_post, all=TRUE)
+
+ema_mean2$id <- factor(ema_mean2$id)
+ema_mean2$group <- factor(ema_mean2$group)
+levels(ema_mean2$group) <- c("Control", "Treatment")
+ema_mean2$time <- factor(ema_mean2$time)
+levels(ema_mean2$time) <- c("baseline", "session4", "post")
+```
+
+```{r}
+#plot positive means
+meanpos_ggplot<- ggplot(data= ema_mean2, 
+       aes(y=pos, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Mean Positive Affect Across Timepoints") + 
+  labs(y = "positive affect score", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+meanpos_ggplot
+```
+```{r}
+#plot negative means
+meanneg_ggplot<- ggplot(data= ema_mean2, 
+       aes(y=neg, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Mean Negative Affect Across Timepoints") + 
+  labs(y = "negative affect score", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+meanneg_ggplot
+```
+
+### Variability (SD)
+
+```{r}
+# initialize SD matrix
+ema_sd <- matrix(0, 32, 7)
+
+colnames(ema_sd) <- c("group", "posbaseline", "possession4", "pospost", "negbaseline", "negsession4", "negpost")
+rownames(ema_sd) <- id_names
+
+for(i in 1:32){
+  ema_sd[i,1] <- id_group[i]
+}
+```
+
+```{r}
+#fill positive mean
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_baseline$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_baseline$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,2] <- sd(vec)
+}
+
+## session4
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_session4$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_session4$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,3] <- sd(vec)
+}
+
+## post
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_post$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_post$positive_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,4] <- sd(vec)
+}
+```
+
+```{r}
+#fill negative mean
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_baseline$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_baseline$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,5] <- sd(vec)
+}
+
+## session4
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_session4$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_session4$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,6] <- sd(vec)
+}
+
+## post
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(betweenday_post$id == name)
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){
+    n <- betweenday_post$negative_mean[index[x]]
+    vec <- c(vec, n)
+  }
+  
+  ema_sd[i,7] <- sd(vec)
+}
+```
+
+```{r}
+ema_sd <- as.data.frame(ema_sd)
+ema_sd$posbaseline <- as.numeric(ema_sd$posbaseline)
+ema_sd$possession4 <- as.numeric(ema_sd$possession4)
+ema_sd$pospost <- as.numeric(ema_sd$pospost)
+ema_sd$negbaseline <- as.numeric(ema_sd$negbaseline)
+ema_sd$negsession4 <- as.numeric(ema_sd$negsession4)
+ema_sd$negpost <- as.numeric(ema_sd$negpost)
+```
+
+```{r}
+#group by group
+ema_sd%>%
+  group_by(group) %>%
+  summarise_at(vars(posbaseline, possession4, pospost, negbaseline, negsession4, negpost, ), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+#### Plots
+```{r}
+#create id variable
+ema_sd$id <- id_names
+  
+#reformat data: baseline
+ema_sd_baseline <- ema_sd %>%
+  dplyr::select(id, group, pos = posbaseline, neg = negbaseline)
+
+#create time variable
+ema_sd_baseline$time <- as.integer(1)
+ema_sd_baseline <- relocate(ema_sd_baseline, time, .before=group)
+```
+
+```{r}
+#reformat data: session4
+ema_sd_session4 <- ema_mean %>%
+  dplyr::select(id, group, pos = possession4, neg = negsession4)
+
+#create time variable
+ema_sd_session4$time <- as.integer(2)
+ema_sd_session4 <- relocate(ema_sd_session4, time, .before=group)
+```
+
+```{r}
+#reformat data: post
+ema_sd_post <- ema_mean %>%
+  dplyr::select(id, group, pos = pospost, neg = negpost)
+
+#create time variable
+ema_sd_post$time <- as.integer(3)
+ema_sd_post<- relocate(ema_sd_post, time, .before=group)
+```
+
+```{r}
+#join predata and postdata
+ema_sd2 <- merge(ema_sd_baseline, ema_sd_session4, all=TRUE)
+ema_sd2  <- merge(ema_sd2 , ema_sd_post, all=TRUE)
+
+ema_sd2 $id <- factor(ema_sd2 $id)
+ema_sd2 $group <- factor(ema_sd2 $group)
+levels(ema_sd2 $group) <- c("Control", "Treatment")
+ema_sd2 $time <- factor(ema_sd2 $time)
+levels(ema_sd2 $time) <- c("baseline", "session4", "post")
+```
+
+```{r}
+#plot positive means
+sdpos_ggplot<- ggplot(data= ema_sd2, 
+       aes(y=pos, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Positive Affect Across Timepoints") + 
+  labs(y = "SD", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+sdpos_ggplot
+```
+
+```{r}
+#plot negative means
+sdneg_ggplot<- ggplot(data= ema_sd2, 
+       aes(y=neg, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Negative Affect Across Timepoints") + 
+  labs(y = "SD", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+sdneg_ggplot
+```
+### Intertia (Auto-Correlation)
+```{r}
+# create AC df
+EMAdata_ac <- EMAdata[,1:14]
+EMAdata_ac$positive_ac <- c(0)
+EMAdata_ac$negative_ac <- c(0)
+
+EMAdata_ac <- filter(EMAdata_ac, !is.na(positive_score))
+```
+
+```{r}
+#compute AC for positive score
+for(n in 1:32){ #cycle through participant ids
+  name <- id_names[n]
+  
+  for(d in 1:9){ #cycle through days
+    index <- which(EMAdata_ac$id == name & EMAdata_ac$day == d)
+      
+    vec <- c()
+    len <- length(index)
+  
+    if(len !=0){#issue if there is no entry for a day number
+      for(i in 1:len){ #number of instances
+        n <- EMAdata_ac$positive_score[index[i]]
+        vec <- c(vec,n) #create vector of pos scores for each instance
+      
+      }
+      acf <- unlist(acf(vec, pl=FALSE))
+    
+      for(i in 1:len){ #number of instances
+        EMAdata_ac$positive_ac[index[i]] <- acf[i]
+      }
+    }
+  }
+}
+```
+
+```{r}
+#compute AC for negative score
+for(n in 1:32){ #cycle through participant ids
+  name <- id_names[n]
+  
+  for(d in 1:9){ #cycle through days
+    index <- which(EMAdata_ac$id == name & EMAdata_ac$day == d)
+      
+    vec <- c()
+    len <- length(index)
+  
+    if(len !=0){#issue if there is no entry for a day number
+      for(i in 1:len){ #number of instances
+        n <- EMAdata_ac$negative_score[index[i]]
+        vec <- c(vec,n) #create vector of neg scores for each instance
+      
+      }
+      acf <- unlist(acf(vec, pl=FALSE))
+    
+      for(i in 1:len){ #number of instances
+        EMAdata_ac$negative_ac[index[i]] <- acf[i]
+      }
+    }
+  }
+}
+```
+
+```{r}
+# initialize AC matrix
+ema_ac <- matrix(0, 32, 7)
+
+colnames(ema_ac) <- c("group", "posbaseline", "possession4", "pospost", "negbaseline", "negsession4", "negpost")
+rownames(ema_ac) <- id_names
+
+for(i in 1:32){
+  ema_ac[i,1] <- id_group[i]
+}
+```
+
+```{r}
+EMAdata_ac$positive_ac <- as.numeric(EMAdata_ac$positive_ac)
+EMAdata_ac$negative_ac <- as.numeric(EMAdata_ac$negative_ac)
+```
+
+```{r}
+#fill positive AC
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Baseline")
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){ 
+    n <- EMAdata_ac$positive_ac[index[x]]
+   
+    if(n != "1"){
+      vec <- c(vec, n)}
+  }
+
+  ema_ac[i,2] <- mean(vec, na.rm=TRUE)
+}
+```
+
+```{r}
+## session4
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Session 4")
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){ 
+    n <- EMAdata_ac$positive_ac[index[x]]
+   
+    if(n != "1"){
+      vec <- c(vec, n)
+    }
+  }
+ema_ac[i,3] <- mean(vec)
+}
+```
+
+```{r}
+## post
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Post")
+  
+  vec <- c()
+  len <- length(index)
+  
+  if(len !=0){
+    for(x in 1:len){ 
+      n <- EMAdata_ac$positive_ac[index[x]]
+   
+      if(n != "1"){
+        vec <- c(vec, n)
+      }
+    }
+  }
+ema_ac[i,4] <- mean(vec, na.rm=TRUE)
+}
+```
+
+```{r}
+#fill negative AC
+## baseline
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Baseline")
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){ 
+    n <- EMAdata_ac$negative_ac[index[x]]
+   
+    if(n != "1"){
+      vec <- c(vec, n)}
+  }
+
+  ema_ac[i,5] <- mean(vec, na.rm=TRUE)
+}
+```
+
+```{r}
+## session4
+
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Session 4")
+  
+  vec <- c()
+  len <- length(index)
+
+  for(x in 1:len){ 
+    n <- EMAdata_ac$negative_ac[index[x]]
+   
+    if(n != "1"){
+      vec <- c(vec, n)
+    }
+  }
+ema_ac[i,6] <- mean(vec)
+}
+```
+
+```{r}
+## post
+for(i in 1:32){
+  name <- id_names[i]
+  index <- which(EMAdata_ac$id == name & EMAdata_ac$event == "Post")
+  
+  vec <- c()
+  len <- length(index)
+  
+  if(len !=0){
+    for(x in 1:len){ 
+      n <- EMAdata_ac$negative_ac[index[x]]
+   
+      if(n != "1"){
+        vec <- c(vec, n)
+      }
+    }
+  }
+ema_ac[i,7] <- mean(vec, na.rm=TRUE)
+}
+```
+
+```{r}
+ema_ac <- as.data.frame(ema_ac)
+ema_ac$posbaseline <- as.numeric(ema_ac$posbaseline)
+ema_ac$possession4 <- as.numeric(ema_ac$possession4)
+ema_ac$pospost <- as.numeric(ema_ac$pospost)
+ema_ac$negbaseline <- as.numeric(ema_ac$negbaseline)
+ema_ac$negsession4 <- as.numeric(ema_ac$negsession4)
+ema_ac$negpost <- as.numeric(ema_ac$negpost)
+```
+
+```{r}
+#group by group
+ema_ac%>%
+  group_by(group) %>%
+  summarise_at(vars(posbaseline, possession4, pospost, negbaseline, negsession4, negpost, ), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+#### Plots
+```{r}
+#create id variable
+ema_ac$id <- id_names
+  
+#reformat data: baseline
+ema_ac_baseline <- ema_ac %>%
+  dplyr::select(id, group, pos = posbaseline, neg = negbaseline)
+
+#create time variable
+ema_ac_baseline$time <- as.integer(1)
+ema_ac_baseline <- relocate(ema_ac_baseline, time, .before=group)
+```
+
+```{r}
+#reformat data: session4
+ema_ac_session4 <- ema_ac %>%
+  dplyr::select(id, group, pos = possession4, neg = negsession4)
+
+#create time variable
+ema_ac_session4 $time <- as.integer(2)
+ema_ac_session4  <- relocate(ema_ac_session4 , time, .before=group)
+```
+
+```{r}
+#reformat data: post
+ema_ac_post <- ema_ac %>%
+  dplyr::select(id, group, pos = pospost, neg = negpost)
+
+#create time variable
+ema_ac_post$time <- as.integer(3)
+ema_ac_post<- relocate(ema_ac_post, time, .before=group)
+```
+
+```{r}
+#join predata and postdata
+ema_ac2 <- merge(ema_ac_baseline, ema_ac_session4, all=TRUE)
+ema_ac2 <- merge(ema_ac2, ema_ac_post, all=TRUE)
+
+ema_ac2 $id <- factor(ema_ac2$id)
+ema_ac2 $group <- factor(ema_ac2$group)
+levels(ema_ac2 $group) <- c("Control", "Treatment")
+ema_ac2 $time <- factor(ema_ac2$time)
+levels(ema_ac2$time) <- c("baseline", "session4", "post")
+```
+
+```{r}
+#plot positive means
+acpos_ggplot<- ggplot(data= ema_ac2, 
+       aes(y=pos, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("AC of Positive Affect Scores Across Timepoints") + 
+  labs(y = "autocorrelation", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+acpos_ggplot
+```
+
+```{r}
+#plot negative means
+acneg_ggplot<- ggplot(data= ema_ac2, 
+       aes(y=neg, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("AC of Negative Affect Scores Across Timepoints") + 
+  labs(y = "autocorrelation", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+acneg_ggplot
+```
+### Affect Instability (MSSD)
+
+```{r}
+# initialize MSSD matrix
+ema_mssd <- matrix(0, 32, 7)
+
+colnames(ema_mssd) <- c("group", "posbaseline", "possession4", "pospost", "negbaseline", "negsession4", "negpost")
+rownames(ema_mssd) <- id_names
+
+for(i in 1:32){
+  ema_mssd[i,1] <- id_group[i]
+}
+```
+
+```{r}
+#fill positive mssd
+## baseline
+mssd <- mssd(betweenday_baseline$positive_mean, group = betweenday_baseline$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+  ema_mssd[i,2] <- mssd[i]
+}
+
+## session4
+mssd <- mssd(betweenday_session4$positive_mean, group = betweenday_session4$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+  ema_mssd[i,3] <- mssd[i]
+}
+
+## post
+mssd <- mssd(betweenday_post$positive_mean, group = betweenday_post$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+  ema_mssd[i,4] <- mssd[i]
+}
+```
+
+```{r}
+#fill negative mssd
+## baseline
+mssd <- mssd(betweenday_baseline$negative_mean, group = betweenday_baseline$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+  ema_mssd[i,5] <- mssd[i]
+}
+
+## session 4
+mssd <- mssd(betweenday_session4$negative_mean, group = betweenday_session4$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+ ema_mssd[i,6] <- mssd[i]
+}
+
+## post
+mssd <- mssd(betweenday_post$negative_mean, group = betweenday_post$id, lag = 1, na.rm = TRUE)
+
+for(i in 1:32){
+  ema_mssd[i,7] <- mssd[i]
+}
+```
+
+```{r}
+ema_mssd <- as.data.frame(ema_mssd)
+ema_mssd$posbaseline <- as.numeric(ema_mssd$posbaseline)
+ema_mssd$possession4 <- as.numeric(ema_mssd$possession4)
+ema_mssd$pospost <- as.numeric(ema_mssd$pospost)
+ema_mssd$negbaseline <- as.numeric(ema_mssd$negbaseline)
+ema_mssd$negsession4 <- as.numeric(ema_mssd$negsession4)
+ema_mssd$negpost <- as.numeric(ema_mssd$negpost)
+```
+
+```{r}
+#group by group
+ema_mssd%>%
+  group_by(group) %>%
+  summarise_at(vars(posbaseline, possession4, pospost, negbaseline, negsession4, negpost, ), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+
+#### Plots
+```{r}
+#create id variable
+ema_mssd$id <- id_names
+  
+#reformat data: baseline
+ema_mssd_baseline <- ema_mssd %>%
+  dplyr::select(id, group, pos = posbaseline, neg = negbaseline)
+
+#create time variable
+ema_mssd_baseline$time <- as.integer(1)
+ema_mssd_baseline <- relocate(ema_mssd_baseline, time, .before=group)
+```
+
+```{r}
+#reformat data: session4
+ema_mssd_session4 <- ema_mssd %>%
+  dplyr::select(id, group, pos = possession4, neg = negsession4)
+
+#create time variable
+ema_mssd_session4 $time <- as.integer(2)
+ema_mssd_session4  <- relocate(ema_mssd_session4 , time, .before=group)
+```
+
+```{r}
+#reformat data: post
+ema_mssd_post <- ema_mssd %>%
+  dplyr::select(id, group, pos = pospost, neg = negpost)
+
+#create time variable
+ema_mssd_post$time <- as.integer(3)
+ema_mssd_post<- relocate(ema_mssd_post, time, .before=group)
+```
+
+```{r}
+#join predata and postdata
+ema_mssd2 <- merge(ema_mssd_baseline, ema_mssd_session4, all=TRUE)
+ema_mssd2 <- merge(ema_mssd2, ema_mssd_post, all=TRUE)
+
+ema_mssd2 $id <- factor(ema_mssd2$id)
+ema_mssd2 $group <- factor(ema_mssd2$group)
+levels(ema_mssd2 $group) <- c("Control", "Treatment")
+ema_mssd2 $time <- factor(ema_mssd2$time)
+levels(ema_mssd2$time) <- c("baseline", "session4", "post")
+```
+
+```{r}
+#plot positive means
+mssdpos_ggplot<- ggplot(data= ema_mssd2, 
+       aes(y=pos, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Positive Affect Scores Across Timepoints") + 
+  labs(y = "mssd", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdpos_ggplot
+```
+
+```{r}
+#plot negative means
+mssdneg_ggplot<- ggplot(data= ema_mssd2, 
+       aes(y=neg, x=time, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Negative Affect Scores Across Timepoints") + 
+  labs(y = "mssd", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdneg_ggplot
+```
+
+### Acute Increase (PAC)
+
+## Preliminary Analyses
+mixed model w REML
+fixed effects: enrollment group, event, event*enrollmentgroup
+random effects: id
+
+calculated in excel - kept running into issues doing it in R
+```{r}
+filename <- "20230325_betweenday.csv"
+
+betweenday <- read_csv(filename)
+```
+
+### x Events
+```{r}
+lmm_emapos <- lmer(positive_mean ~ enrollmentgroup * event + (1|id), data=betweenday)
+
+summary(lmm_emapos)
+anova(lmm_emapos) 
+
+eta_squared(lmm_emapos, partial=FALSE)
+```
+
+```{r}
+lmm_emaneg <- lmer(negative_mean ~ enrollmentgroup * event + (1|id), data=betweenday)
+
+summary(lmm_emaneg)
+anova(lmm_emaneg) 
+
+eta_squared(lmm_emaneg, partial=FALSE)
+```
+
+#### Plots
+```{r}
+# Positive Affect plot
+xlabels <- c("Baseline", "Session 4", "Post")
+
+#create trendline
+ci_panaspos <- confint(lmm_emapos, method="boot", nsim=10)
+ci_panaspos <- tibble::rownames_to_column(data.frame(ci_panaspos), "Term") 
+colnames(ci_panaspos)<- c("Term", "CI 2.5%", "CI 97.5%")
+as.tibble(ci_panaspos)
+
+#Plot model - positive
+panaspos_ggplot<- ggplot(data= betweenday, 
+       aes(y=positive_mean, x=event, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Positive Affect Across Timepoints") + 
+  labs(y = "positive affect score", x = "timepoint") +
+  theme(legend.position = "none") + 
+  scale_x_discrete(labels = xlabels) +
+  geom_abline(intercept = fixef(lmm_emapos)[1], #Regression Line (RL).
+              slope=fixef(lmm_emapos)[2], col="black", linetype = "dashed") +                 
+  geom_abline(intercept = ci_panaspos$`CI 97.5%`[3], 
+              slope=ci_panaspos$`CI 97.5%`[4], col="grey", linetype = "dotted") + #Upper Bound of RL
+  geom_abline(intercept = ci_panaspos$`CI 2.5%`[3], 
+              slope=ci_panaspos$`CI 2.5%`[4], col="grey", linetype= "dotted") #Lower Bound of RL
+  
+panaspos_ggplot
+```
+
+```{r}
+# Negative Affect plot
+xlabels <- c("Baseline", "Session 4", "Post")
+
+#create trendline
+ci_panasneg <- confint(lmm_emaneg, method="boot", nsim=10)
+ci_panasneg <- tibble::rownames_to_column(data.frame(ci_panasneg), "Term") 
+colnames(ci_panasneg)<- c("Term", "CI 2.5%", "CI 97.5%")
+as.tibble(ci_panasneg)
+
+#Plot model 
+panasneg_ggplot<- ggplot(data= betweenday, 
+       aes(y=negative_mean, x=event, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Negative Affect Across Timepoints") + 
+  labs(y = "negative affect score", x = "timepoint") +
+  theme(legend.position = "none") + 
+  scale_x_discrete(labels = xlabels) +
+  geom_abline(intercept = fixef(lmm_emaneg)[1], #Regression Line (RL).
+              slope=fixef(lmm_emaneg)[2], col="black", linetype = "dashed") +                 
+  geom_abline(intercept = ci_panasneg$`CI 97.5%`[3], 
+              slope=ci_panasneg$`CI 97.5%`[4], col="grey", linetype = "dotted") + #Upper Bound of RL
+  geom_abline(intercept = ci_panasneg$`CI 2.5%`[3], 
+              slope=ci_panasneg$`CI 2.5%`[4], col="grey", linetype= "dotted") #Lower Bound of RL
+
+panasneg_ggplot
+```
+
+### x Days
+```{r}
+betweenday$day <- as.factor(betweenday$day)
+levels(betweenday$day) <- c("Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8", "Day 9")
+```
+
+```{r}
+lmm_emapos <- lmer(positive_mean ~ enrollmentgroup * day + (1|id), data=betweenday)
+
+anova(lmm_emapos) 
+summary(lmm_emapos)
+
+eta_squared(lmm_emapos, partial = FALSE)
+```
+
+```{r}
+lmm_emaneg <- lmer(negative_mean ~ enrollmentgroup * day + (1|id), data=betweenday)
+
+anova(lmm_emaneg) 
+summary(lmm_emaneg)
+
+eta_squared(lmm_emaneg, partial = FALSE)
+```
+
+#### Plots
+```{r}
+# Positive Affect plot
+xlabels <- c("Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8", "Day 9")
+
+#Plot model - positive
+panaspos_ggplot<- ggplot(data= betweenday, 
+       aes(y=positive_mean, x=day, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Positive Affect Across Days") + 
+  labs(y = "positive affect score", x = "day") +
+  theme(legend.position = "none") + 
+  scale_x_discrete(labels = xlabels) 
+ 
+panaspos_ggplot
+```
+
+```{r}
+# Negative Affect plot
+xlabels <- c("Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8", "Day 9")
+
+#Plot model - positive
+panaspos_ggplot<- ggplot(data= betweenday, 
+       aes(y=negative_mean, x=day, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Negative Affect Across Days") + 
+  labs(y = "negative affect score", x = "day") +
+  theme(legend.position = "none") + 
+  scale_x_discrete(labels = xlabels)
+
+panaspos_ggplot
+```
+
+### x Instances
+```{r}
+EMAdata$instance <- as.factor(EMAdata$instance)
+levels(EMAdata$instance) <- c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15")
+```
+
+```{r}
+lmm_emapos <- lmer(positive_score ~ enrollmentgroup * instance + (1|id), data= EMAdata)
+
+anova(lmm_emapos) 
+summary(lmm_emapos)
+```
+
+```{r}
+lme_emaneg <- lmer(negative_score ~ enrollmentgroup * instance + (1|id), data= EMAdata)
+
+anova(lme_emaneg) 
+summary(lme_emaneg)
+```
+
+#### Plots
+```{r}
+# Positive Affect plot @ Baseline
+EMA_baseline <- filter(EMAdata, event == "Baseline")
+  
+#Plot model - positive
+instance_pos<- ggplot(data= EMA_baseline, 
+       aes(y=positive_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Positive Affect Across Instance @ Baseline") + 
+  labs(y = "positive affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_pos
+```
+
+```{r}
+# Positive Affect plot @ Session 4
+EMA_session4 <- filter(EMAdata, event == "Session 4")
+  
+#Plot model - positive
+instance_pos<- ggplot(data= EMA_session4, 
+       aes(y=positive_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Positive Affect Across Instance @ Session4") + 
+  labs(y = "positive affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_pos
+```
+
+```{r}
+# Positive Affect plot @ Post
+EMA_post <- filter(EMAdata, event == "Post")
+  
+#Plot model - positive
+instance_pos<- ggplot(data= EMA_post, 
+       aes(y=positive_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Positive Affect Across Instance @ Post") + 
+  labs(y = "positive affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_pos
+```
+
+```{r}
+# Negative Affect plot @ Baseline
+
+instance_neg<- ggplot(data= EMA_baseline, 
+       aes(y=negative_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Negative Affect Across Instance  @ Baseline") + 
+  labs(y = "negative affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_neg
+```
+
+```{r}
+# Negative Affect plot @ Session 4
+
+instance_neg<- ggplot(data= EMA_session4, 
+       aes(y=negative_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Negative Affect Across Instance  @ Session 4") + 
+  labs(y = "negative affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_neg
+```
+
+```{r}
+# Negative Affect plot @ Post
+
+instance_neg<- ggplot(data= EMA_post, 
+       aes(y=negative_score, x=instance, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("Negative Affect Across Instance  @ Post") + 
+  labs(y = "negative affect score", x = "instance") +
+  theme(legend.position = "none") 
+
+instance_neg
+```
+
+# Multilevel Model
+## Model 1: Collapse Events
+
+```{r}
+#combine dataset 
+mlm <- ema_mean2[,1:3]
+
+mlm$pos_mean <- ema_mean2[,4]
+mlm$neg_mean <- ema_mean2[,5]
+
+mlm$pos_sd <- ema_sd2[,4]
+mlm$neg_sd <- ema_sd2[,5]
+
+mlm$pos_ac <- ema_ac2[,4]
+mlm$neg_ac <- ema_ac2[,5]
+
+mlm$pos_mssd <- ema_mssd2[,4]
+mlm$neg_mssd <- ema_mssd2[,5]
+
+#mlm$pos_pac <- ema_pac2[,4]
+#mlm$neg_pac <- ema_pac2[,5]
+
+class(mlm)
+```
+
+```{r}
+outcome <- read_csv("20230325_phase2data.csv")
+outcome <- filter(outcome, group != 2)
+outcome <- filter(outcome, id != "12046")
+outcome <- filter(outcome, event == "baseline") #baseline only
+
+outcome <- outcome[rep(seq_len(nrow(outcome)), each = 3), ]
+
+class(outcome)
+
+outc <- as.data.frame(outcome[,4:8])
+class(outc)
+```
+
+```{r}
+mlm$ryff <- (outc[,1])
+mlm$pss <- outc[,2]
+mlm$bdi <- outc[,3]
+mlm$bai <- outc[,4]
+mlm$mi <- outc[,5]
+
+view(mlm)
+```
+
+```{r}
+library(lmerTest) #tests on lmer objects
+library(performance) # ICC calculations
+library(texreg)
+#library(interactions) # plotting interactions
+```
+### Null Model
+Level 1 - Event
+Level 2 - Participant
+Level 3 - Treatment Group
+
+```{r}
+#run null model
+nullmodel_pos1 <- lmer(pos_mean ~ 1 + (1|id), data = mlm)
+summary(nullmodel_pos1) #with REML
+
+nullmodel_pos2 <- lmer(pos_mean ~ 1 + (1|id), data = mlm, REML = FALSE)
+summary(nullmodel_pos2) #with ML
+```
+```{r}
+texreg::knitreg(list(nullmodel_pos1, 
+                     nullmodel_pos2),
+                custom.model.names = c("M0: Null, ML", 
+                                       "M0: Null, REML"),
+                caption            = "NULL Model: different estimation methods",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#calculate ICC
+performance::icc(nullmodel_pos1)
+```
+
+```{r}
+insight::get_variance(nullmodel_pos1)
+```
+
+```{r}
+#compare 2 or 3 levels
+nullmodel_pos_2l <- lmer(pos_mean ~ 1 + (1|id), data=mlm)
+
+texreg::knitreg(list(nullmodel_pos_2l, 
+                     nullmodel_pos1),
+                custom.model.names = c("2 levels", 
+                                       "3 levels"),
+                caption            = "MLM: Two or Three Levels?",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#likelihood-ratio test
+anova(nullmodel_pos_2l, nullmodel_pos1, refit = FALSE)
+```
+
+### Explanatory Variables
+Level 1 - Affect Dynamic Variables
+Level 2 - Background Variables
+
+```{r}
+nullmodel_pos <- lmer(pos_mean ~ 1 + (1|id), data = mlm)
+summary(nullmodel_pos)
+
+nullmodel_neg <- lmer(neg_mean ~ 1 + (1|id), data = mlm)
+summary(nullmodel_neg)
+```
+
+#### Fixed Effects
+```{r}
+#add level 1 fixed effects
+posmodel1 <- lmer(pos_mean ~ group +  # experimental condition = categorical factor
+                    pos_sd + pos_ac + pos_mssd +  # level 1 covariates
+                    (1|id), data = mlm
+                    )
+```
+
+```{r}
+#add level 2 fixed effects
+posmodel2 <- lmer(pos_mean ~ group +  # experimental condition = categorical factor
+                    pos_sd + pos_ac + pos_mssd +  # level 1 covariates
+                    ryff + pss + bdi + bai + mi + # level 2 covariates
+                    (1|id), data = mlm
+                    )
+```
+
+```{r}
+#compare null, model 1, model 2
+texreg::knitreg(list(nullmodel_pos1,
+                     posmodel1, 
+                     posmodel2),
+                custom.model.names = c("M0: null", 
+                                       "M1: L1 pred",
+                                       "M2: L2 pred"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+Level 1 predictors did improve model fit, SD was sig. 
+Level 2 predictors did not improve model fit
+
+```{r}
+#remove non-sig predictors
+posmodel1.1 <- lmer(pos_mean ~ group +  # experimental condition = categorical factor
+                    pos_sd + # level 1 covariates
+                    (1|id), data = mlm
+                    )
+```
+
+```{r}
+#compare model 1 and model 1.1
+texreg::knitreg(list(posmodel1, 
+                     posmodel1.1),
+                custom.model.names = c("M1: L1 pred",
+                                       "M2: L1 - sig"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+NEgative
+```{r}
+#add level 1 fixed effects
+negmodel1 <- lmer(neg_mean ~ group +  # experimental condition = categorical factor
+                    neg_sd + neg_ac + neg_mssd +  # level 1 covariates
+                    (1|id), data = mlm
+                    )
+```
+
+```{r}
+#add level 2 fixed effects
+negmodel2 <- lmer(neg_mean ~ group +  # experimental condition = categorical factor
+                    neg_sd + neg_ac + neg_mssd +  # level 1 covariates
+                    ryff + pss + bdi + bai + mi + # level 2 covariates
+                    (1|id), data = mlm
+                    )
+```
+
+```{r}
+#compare null, model 1, model 2
+texreg::knitreg(list(nullmodel_neg,
+                     negmodel1, 
+                     negmodel2),
+                custom.model.names = c("M0: null", 
+                                       "M1: L1 pred",
+                                       "M2: L2 pred"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+Level 1 predictors did improve model fit on AIC, loglike, MSSD was sig. 
+Level 2 predictors did not improve model fit, bai was sig.
+
+```{r}
+#remove non-sig predictors
+negmodel1.1 <- lmer(neg_mean ~ group +  # experimental condition = categorical factor
+                    neg_mssd + # sig. level 1 covariates
+                    (1|id), data = mlm
+                    )
+negmodel1.2 <- lmer(neg_mean ~ group +  # experimental condition = categorical factor
+                    neg_mssd + # sig. level 1 covariates
+                    bai + #sig. level 2 covariates
+                    (1|id), data = mlm
+                    )
+
+```
+
+```{r}
+#compare model 1 and model 1.1
+texreg::knitreg(list(negmodel1, 
+                     negmodel1.1,
+                     negmodel1.2),
+                custom.model.names = c("M1: L1 pred",
+                                       "M2: L1 - sig",
+                                       "M2: L2 - sig"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+#### Random Effects
+```{r}
+posmodel3 <- lmer(pos_mean ~ group +  # treatment group = categorical factor
+                    pos_sd +  # level 1 covariates
+                    (1|id) +  # random intercept for id
+                    (0|group),    # random slope for treatment group 
+                    data = mlm
+                    )
+```
+
+
+## Model 2: Collapse Day
+### Null Model
+Level 1: Day within Event
+Level 2: Event within Participant
+Level 3: Participant
+
+```{r}
+#run null model
+#nullmodel2_pos1 <- lmer(pos_mean ~ 1 + (1|id/time), data = mlm)
+
+nullmodel2_pos1 <- lmer(positive_score ~ 1 + 
+                          (1|event/day), # random day within event
+                          #(1|id), #random event within participant
+                        data = EMAdata)
+```
+
+```{r}
+#compare 2 or 3 levels
+nullmodel2_pos2 <- lmer(positive_score ~1 + (1|id), data = EMAdata)
+
+texreg::knitreg(list(nullmodel2_pos2, 
+                     nullmodel2_pos1),
+                custom.model.names = c("2 levels", 
+                                       "3 levels"),
+                caption            = "MLM: Two or Three Levels?",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#likelihood-ratio test
+anova(nullmodel_pos1, nullmodel2_pos1, refit = FALSE)
+```
+```{r}
+#get variances
+insight::get_variance(nullmodel2_pos1)
+```
+
+## Model 3: Full Complexity
+### Null Model
+Level 1: Repeated Measures Within Day
+Level 2: Day within Event
+Level 3: Event within Participant
+Level 4: Participant
+
+```{r}
+#run null model
+nullmodel3_pos1 <- lmer(positive_score ~ 1 + 
+                          # repeated measures within day
+                          (1|event/day/instance), # random instance within day within event
+                          #(1|id), #random event within participant
+                        data = EMAdata)
+```
+
+```{r}
+#compare 4 or 3 levels
+
+texreg::knitreg(list(nullmodel2_pos1, 
+                     nullmodel3_pos1),
+                custom.model.names = c("3 levels", 
+                                       "4 levels"),
+                caption            = "MLM: Two or Three Levels?",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#likelihood-ratio test
+anova(nullmodel_pos1, nullmodel2_pos1, refit = FALSE)
+```
+```{r}
+#get variances
+insight::get_variance(nullmodel3_pos1)
+```
+## Model 4: Variance-Suggested Model
+### Null Model
+Level 1: Repeated Measures Instance
+Level 2: Event
+Level 3: Participant
+
+```{r}
+#run null model
+nullmodel4_pos1 <- lmer(positive_score ~ 1 + 
+                          (1| event/instance),
+                          # repeated measures instance
+                          # event 
+                          # participant
+                        data = EMAdata)
+```
+
+```{r}
+#compare 4 or 3 levels
+
+texreg::knitreg(list(nullmodel2_pos1, 
+                     nullmodel3_pos1, 
+                     nullmodel4_pos1),
+                custom.model.names = c("2 levels",
+                                       "3 levels", 
+                                       "4 levels"),
+                caption            = "MLM: Two, Three, or Four Levels?",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#get variances
+insight::get_variance(nullmodel4_pos1)
+```
+```{r}
+nullmodel4_neg1 <- lmer(negative_score ~ 1 + 
+                          (1| event/instance),
+                          # repeated measures instance
+                          # event 
+                          # participant
+                        data = EMAdata)
+```
+
+```{r}
+#get variances
+insight::get_variance(nullmodel4_neg1)
+```
+
+### Explanatory Variables
+```{r}
+nullmodel_pos <- lmer(positive_score ~ 1 + (1|event/instance), data = EMAdata)
+summary(nullmodel_pos)
+
+nullmodel_neg <- lmer(negative_score ~ 1 + (1|event/instance), data = EMAdata)
+summary(nullmodel_neg)
+```

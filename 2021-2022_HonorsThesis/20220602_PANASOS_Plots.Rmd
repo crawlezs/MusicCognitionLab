@@ -1,0 +1,207 @@
+---
+title: "PANAS_IOS_plots"
+output: html_notebook
+---
+
+Plots based on MBMS_PANAS_plots by Talia Liu
+
+
+Load necessary packages
+```{r}
+library(ggplot2)
+library(plyr)
+library(readr)
+library(reshape2)
+```
+
+Load dataset
+```{r}
+df <- PrePostSession_PANASIOS_20210918 
+
+colnames(df) <- c("id", "session", "panas_start_pos", "panas_start_neg", "panas_end_pos", "panas_end_neg", "ios_start", "ios_end")
+
+df <- subset(df, id!= "12002", id!= "12009")
+
+df$session[df$session == "Session 1 (Arm 1: Arm 1)"] <- "1"
+df$session[df$session == "Session 2 (Arm 1: Arm 1)"] <- "2"
+df$session[df$session == "Session 3 (Arm 1: Arm 1)"] <- "3"
+df$session[df$session == "Session 4 (Arm 1: Arm 1)"] <- "4"
+df$session[df$session == "Session 5 (Arm 1: Arm 1)"] <- "5"
+df$session[df$session == "Session 6 (Arm 1: Arm 1)"] <- "6"
+df$session[df$session == "Session 7 (Arm 1: Arm 1)"] <- "7"
+
+df$session <- as.integer(df$session)
+
+print(df)
+```
+```{r}
+write.csv(df,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\df_r.csv", row.names = FALSE)
+
+```
+
+```{r}
+panas_pos <- df[c('id', 'dummy', 'panas_start_pos', 'panas_end_pos')]
+panas_pos <- plyr::rename(panas_pos, c("panas_start_pos"="START", "panas_end_pos"="END"))
+# convert data to long form
+panas_pos <- melt(panas_pos, id.vars=c("id", "dummy"))
+#plot
+panas_pos_plot <- ggplot(data = panas_pos, aes(x = variable, y = value))
+panas_pos_plot + geom_line(aes( group=id), size=0.1, color="darkslategray3") + geom_line(aes(group=dummy), size=2, stat="summary", color="royalblue3") + scale_x_discrete(name ="Timepoint") + ylab("PANAS Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\panas_pos_plot_TL.png", plot = panas_pos_plot,scale = 1)
+```
+
+TALIA CODE
+```{r}
+startend_df <- as_tibble(df_r)
+
+startend_df$dummy <- 1
+early <-  startend_df[ which(startend_df$session==0), ]                             
+mid <-  startend_df[ which(startend_df$session==1), ]
+late <-  startend_df[ which(startend_df$session==2), ]
+
+panas_pos <- startend_df[c('id_session', 'dummy', 'panas_start_pos', 'panas_end_pos')]
+panas_pos <- plyr::rename(panas_pos, c("panas_start_pos"="START", "panas_end_pos"="END"))
+
+panas_pos <- melt(panas_pos, id.vars=c("id_session", "dummy"))
+
+
+#plot - color
+panas_pos_plot <- ggplot(data = panas_pos, aes(x = variable, y = value))
+panas_pos_plot + geom_line(aes( group=id_session), size=0.05, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_discrete(name ="Timepoint") + ylab("Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_pos_plot
+
+#plot - color
+panas_pos_plotc <- ggplot(data = panas_pos, aes(x = variable, y = value))
+panas_pos_plotc + geom_line(aes( group=id_session), size=0.05, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_discrete(name ="Timepoint") + ylab("Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_pos_plotc
+```
+
+```{r}
+
+panas_pos_plot2 <- ggplot(data = panas_pos, aes(x = variable, y = value))
+panas_pos_plot2 + geom_line(aes( group=session), size=0.1, color="blue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_discrete(name ="Timepoint") + ylab("PANAS Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_pos_plot2
+
+```
+
+PANAS NEGATIVE AFFECT
+```{r}
+panas_neg <- df[c('id', 'dummy', 'panas_start_neg', 'panas_end_neg')]
+panas_neg <- plyr::rename(panas_neg, c("panas_start_neg"="START", "panas_end_neg"="END"))
+
+# convert data to long form
+panas_neg <- melt(panas_neg, id.vars=c("id", "dummy"))
+
+panas_neg_plot <- ggplot(data = panas_neg, aes(x = variable, y = value))
+
+panas_neg_plot <- panas_neg_plot + geom_line(aes( group=id), size=0.5, color="navy") + geom_line(aes(group=dummy), size=2, stat="summary", color="navy") + scale_x_discrete(name ="Timepoint") + ylab("PANAS Negative Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_neg_plot
+
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\panas_neg_plot_TL.png", plot = panas_neg_plot,scale = 1)
+```
+
+TALIA CODE
+```{r}
+panas_neg <- startend_df[c('id_session', 'dummy', 'panas_start_neg', 'panas_end_neg')]
+panas_neg <- plyr::rename(panas_neg, c("panas_start_neg"="START", "panas_end_neg"="END"))
+
+panas_neg <- melt(panas_neg, id.vars=c("id_session", "dummy"))
+
+
+#plot - color
+panas_neg_plot <- ggplot(data = panas_neg, aes(x = variable, y = value))
+panas_neg_plot + geom_line(aes( group=id_session), size=0.05, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_discrete(name ="Timepoint") + ylab("Negative Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_neg_plot
+
+#plot - color
+panas_neg_plotc <- ggplot(data = panas_neg, aes(x = variable, y = value))
+panas_neg_plotc + geom_line(aes( group=id_session), size=0.05, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_discrete(name ="Timepoint") + ylab("Negative Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+panas_neg_plotc
+```
+
+
+IOS
+```{r}
+ios <- df[c('id', 'dummy', 'ios_start', 'ios_end')]
+ios <- plyr::rename(ios, c("ios_start"="START", "ios_end"="END"))
+
+# convert data to long form
+ios <- melt(ios, id.vars=c("id", "dummy"))
+
+ios_plot <- ggplot(data = ios, aes(x = variable, y = value))
+
+ios_plot <- ios_plot + geom_line(aes( group=id), size=0.5, color="navy") + geom_line(aes(group=dummy), size=2, stat="summary", color="navy") + scale_x_discrete(name ="Timepoint") + ylab("IOS Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+ios_plot
+
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\ios_plot_TL.png", plot =ios_plot,scale = 1)
+```
+
+```{r}
+ios <- startend_df[c('id_session', 'dummy', 'ios_start', 'ios_end')]
+ios <- plyr::rename(ios, c("ios_start"="START", "ios_end"="END"))
+
+ios <- melt(ios, id.vars=c("id_session", "dummy"))
+
+
+#plot - color
+ios_plot <- ggplot(data = ios, aes(x = variable, y = value))
+ios_plot + geom_line(aes( group=id_session), size=0.05, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_discrete(name ="Timepoint") + ylab("Connection Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+ios_plot
+
+#plot - color
+ios_plotc <- ggplot(data = ios, aes(x = variable, y = value))
+ios_plotc + geom_line(aes( group=id_session), size=0.05, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_discrete(name ="Timepoint") + ylab("Connection Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+ios_plotc
+```
+
+PANAS ACROSS EACH WEEK
+```{r}
+pos_across_sessions <- ggplot(data = startend_df, aes(x = session, y = panas_start_pos))
+
+pos_across_sessions <- pos_across_sessions + geom_line(aes(group=id), size=0.5, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+pos_across_sessions
+
+pos_across_sessions2 <- pos_across_sessions + geom_line(aes(group=id), size=0.5, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Positive Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+pos_across_sessions2
+```
+
+```{r}
+neg_across_sessions <- ggplot(data = startend_df, aes(x = session, y = panas_start_neg))
+
+neg_across_sessions <- neg_across_sessions + geom_line(aes( group=id), size=0.5, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Negative Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+neg_across_sessions
+
+neg_across_sessions2 <- neg_across_sessions + geom_line(aes( group=id), size=0.5, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Negative Affect Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+neg_across_sessions2
+
+```
+
+```{r}
+ios_across_sessions <- ggplot(data = startend_df, aes(x = session, y = ios_start))
+
+ios_across_sessions <- ios_across_sessions + geom_line(aes( group=id), size=0.5, color="lightskyblue") + geom_line(aes(group=dummy), size=2, stat="summary", color="blue") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Connection Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+ios_across_sessions
+
+ios_across_sessions2 <- ios_across_sessions + geom_line(aes( group=id), size=0.5, color="gray50") + geom_line(aes(group=dummy), size=2, stat="summary", color="black") + scale_x_continuous(breaks=seq(1, 7, 1), name="Session Number")+ ylab("Connection Score")  +theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), text = element_text(size=20, face="bold"))
+
+ios_across_sessions2
+
+```
+
+```
+
+

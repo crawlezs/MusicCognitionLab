@@ -1,0 +1,1662 @@
+---
+title: "20230502_EMAAnalysis"
+output: html_document
+date: "2023-05-02"
+---
+# Load Data
+```{r}
+#load packages
+library(tidyverse) #data wrangling
+library(dplyr) # data wrangling
+library(ggpubr) # plotting
+library(readr) # read_csv
+library(psych) # psych statistics - MSSD
+library(lme4) # mixed models
+library(effectsize) #effect size functions
+library(EMAtools) #effect size functions
+library(lubridate) #time variables
+library(tseries) #time series tools
+```
+
+```{r}
+#read EMA dataset
+filename <- "20230509_EMAData.csv"
+
+EMAdata <- read_csv(filename)
+
+#positive_sd and #negative_SD are successive differences
+```
+
+```{r}
+#transform variables to factor
+EMAdata$id <- as.factor(EMAdata$id)
+EMAdata$event <- as.factor(EMAdata$event) 
+levels(EMAdata$event) <- c("Baseline", "Session 4", "Post")
+EMAdata$enrollmentgroup <- as.factor(EMAdata$enrollmentgroup) 
+levels(EMAdata$enrollmentgroup) <- c("Waitlist Control", "Immediate Enrollment", "Group")
+```
+
+```{r}
+#remove group 2
+EMAdata <- filter(EMAdata, enrollmentgroup != "Group")
+```
+
+```{r}
+#check missing items (completed =1, N/A on at least 1 item)
+missingitems <- filter(EMAdata, completed == "1" & (is.na(positive_score) | is.na(negative_score))) #n=0 
+```
+
+# Descriptive Statistics
+## PANAS Data
+### Mean (SD) Table
+```{r}
+summarise_at(EMAdata, vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+
+```{r}
+#group by event
+EMAdata%>%
+  group_by(event) %>%
+  summarise_at(vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+
+```{r}
+#group by enrollment
+EMAdata%>%
+  group_by(enrollmentgroup) %>%
+  summarise_at(vars(positive_score, negative_score), list(mean=mean, sd=sd), na.rm=TRUE)
+```
+### Normality & Distribution
+```{r}
+#create grouped boxplot - positive
+
+ggplot(EMAdata, aes(x=event, y=positive_score, fill=enrollmentgroup)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("score") + ggtitle("PANAS Positive Score x Group")
+```
+
+```{r}
+#create grouped boxplot - negative
+
+ggplot(EMAdata, aes(x=event, y=negative_score, fill=enrollmentgroup)) + 
+  scale_fill_manual(values = c("lightblue3", "dodgerblue4")) +
+  geom_boxplot() + xlab("event") + ylab("score") +
+  ggtitle("PANAS Negative Score x Group")
+```
+
+# Affect Dynamic Variables
+```{r}
+id_names <- c("12015", "12016", "12017", "12018", "12019", "12020","12021", "12022", "12023", "12024","12025", "12026", "12027", "12028", "12029", "12030", "12031", "12032", "12033", "12034", "12035", "12036", "12037", "12038", "12039", "12040", "12041","12043", "12044", "12045", "12050", "12057")
+
+length(id_names)
+
+id_group <- c("1", "1", "0", "1", "0", "1", "0", "0", "1", "1", "0", "1", "0", "0", "0", "0", "1", "1", "1", "0", "1", "0", "0", "1", "1", "0", "0", "1", "0", "1","1", "1")
+
+length(id_group)
+```
+```{r}
+withinday <- EMAdata[,c('id', 'event', 'day', 'instance', 'enrollmentgroup', 'weekend', 'time_interval', 'positive_score', 'negative_score', "positive_SD","negative_SD")]
+```
+
+```{r}
+#convert time_interval from h:m:s to minutes
+withinday$time_interval_min <- hour(withinday$time_interval)*60 + minute(withinday$time_interval)
+
+withinday <- withinday %>%
+  relocate("time_interval_min", .after="time_interval")
+```
+
+## Standard Deviation (SD)
+
+### SD - Day
+```{r}
+#initialize SD matrix
+
+stddev_day <- matrix(0, 288, 7)
+
+colnames(stddev_day) <- c("id", "group", "day", "event", "weekend", "pos", "neg")
+
+id_ex <- rep((id_names), each=9)
+length(id_ex)
+
+group_ex <- rep((id_group), each=9)
+length(group_ex)
+
+days <- c("1", "2", "3", "4", "5", "6", "7", "8", "9")
+day_ex <- rep(days, times=32)
+length(day_ex)
+
+event <- c("1", "2", "3")
+event_ex <- rep(event, each=3)
+event_ex <- rep(event_ex, times=32)
+
+weekend_vec <- c()
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(d in 1:9){
+    index <- which(EMAdata$id == name & EMAdata$day == d)
+    r <- as.numeric(index[1])
+    
+    weekend_x <- EMAdata$weekend[r] 
+      
+    weekend_vec <- append(weekend_vec, weekend_x)
+  }
+} 
+
+for(i in 1:288){
+  stddev_day[i,1] <- id_ex[i]
+  stddev_day[i,2] <- group_ex[i]
+  stddev_day[i,3] <- day_ex[i]
+  stddev_day[i,4] <- event_ex[i]
+  stddev_day[i,5] <- weekend_vec[i]
+}
+
+stddev_day <- as.data.frame(stddev_day)
+```
+```{r}
+#fill SD matrix
+stddev_pos <- c()
+stddev_neg <- c()
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(d in 1:9){
+    index <- which(withinday$id == name & withinday$day == d)
+    
+    vec_pos <- c()
+    vec_neg <- c()
+    len <- length(index)
+    
+    for(x in 1:len){ #create vector of scores under id(i) and day(d)
+      n_pos <- withinday$positive_score[index[x]]
+      vec_pos <- c(vec_pos, n_pos)
+      
+      n_neg <- withinday$negative_score[index[x]]
+      vec_neg <- c(vec_neg, n_neg)
+    }
+    
+    stddev_pos <- append(stddev_pos, sd(vec_pos, na.rm=TRUE)) #save vec of pos SDs
+    stddev_neg <- append(stddev_neg, sd(vec_neg, na.rm=TRUE)) #save vec of neg SDs
+  }
+}
+
+for(i in 1:288){
+  stddev_day[i,6] <- stddev_pos[i]
+  stddev_day[i,7] <- stddev_neg[i]
+}
+```
+
+```{r}
+#plot positive sd
+stddev_day$pos <- as.numeric(stddev_day$pos)
+
+stddevpos_ggplot<- ggplot(data= stddev_day, 
+       aes(y=pos, x=day, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Positive Affect Scores Across Days") + 
+  labs(y = "SD", x = "day") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+stddevpos_ggplot
+```
+```{r}
+#plot negative sd
+stddev_day$neg <- as.numeric(stddev_day$neg)
+
+stddevneg_ggplot<- ggplot(data= stddev_day, 
+       aes(y=neg, x=day, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Negative Affect Scores Across Days") + 
+  labs(y = "SD", x = "day") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+stddevneg_ggplot
+```
+
+### SD - Event
+```{r}
+#initialize MSSD matrix
+
+stddev_event <- matrix(0, 96, 5)
+
+colnames(stddev_event) <- c("id", "group", "event", "pos", "neg")
+
+id_ex <- rep((id_names), each=3)
+length(id_ex)
+
+group_ex <- rep((id_group), each=3)
+length(group_ex)
+
+event <- c("Baseline", "Session4", "Post")
+day_ex <- rep(event, times=32)
+length(day_ex)
+
+for(i in 1:96){
+  stddev_event[i,1] <- id_ex[i]
+  stddev_event[i,2] <- group_ex[i]
+  stddev_event[i,3] <- day_ex[i]
+}
+```
+
+```{r}
+stddev_pos <- c()
+stddev_neg <- c()
+
+stddev_day$pos <- as.numeric(stddev_day$pos)
+stddev_day$neg <- as.numeric(stddev_day$neg)
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(e in 1:3){
+    index <- which(stddev_day$id == name & stddev_day$event == e)
+    
+    vec_pos <- c()
+    vec_neg <- c()
+    len <- length(index)
+    
+    for(x in 1:len){ #create vector of SD values under id(i) and event(e)
+      n_pos <- stddev_day$pos[index[x]]
+      vec_pos <- c(vec_pos, n_pos)
+      
+      n_neg <- stddev_day$neg[index[x]]
+      vec_neg <- c(vec_neg, n_neg)
+    }
+    
+    stddev_pos <- append(stddev_pos, mean(vec_pos, na.rm=TRUE)) #save vec of pos avg.
+    stddev_neg <- append(stddev_neg, mean(vec_neg, na.rm=TRUE)) #save vec of neg avg.
+  }
+}
+
+for(i in 1:96){
+  stddev_event[i,4] <- stddev_pos[i]
+  stddev_event[i,5] <- stddev_neg[i]
+}
+```
+
+```{r}
+#plot positive sd
+stddev_event <- as.data.frame(stddev_event)
+stddev_event$pos <- as.numeric(stddev_event$pos)
+
+stddevpos_ggplot<- ggplot(data= stddev_event, 
+       aes(y=pos, x=event, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Positive Affect Scores Across Timepoints") + 
+  labs(y = "SD", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+stddevpos_ggplot
+```
+```{r}
+#plot negative sd
+stddev_event$neg <- as.numeric(stddev_event$neg)
+
+stddevneg_ggplot<- ggplot(data= stddev_event, 
+       aes(y=neg, x=event, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("SD of Negative Affect Scores Across Timepoints") + 
+  labs(y = "SD", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+stddevneg_ggplot
+```
+## Mean-Squared Successive Difference (MSSD)
+
+### MSSD - Instance
+```{r}
+# scatter plot of ASD x time interval (hour)
+withinday$positive_SD <- as.numeric(withinday$positive_SD)
+withinday$negative_SD <- as.numeric(withinday$negative_SD)
+
+ggplot(withinday, aes(x = time_interval, y=positive_SD)) + geom_point(size = 0.5) +
+  ggtitle("Successive Difference - Positive")
+  
+ggplot(withinday, aes(x = time_interval, y=negative_SD)) + geom_point(size = 0.5) +
+  ggtitle("Successive Difference - Negative")
+```
+```{r}
+#ASD = positive_SD[i] / time_interval[i]
+pos_ASD <- vector()
+
+for(i in 1:1425){
+  pos_ASD <- append(pos_ASD, c(withinday$positive_SD[i] / withinday$time_interval_min[i]))
+  
+  i = i + 1
+}
+
+head(pos_ASD)
+
+#create positive ASD variable
+withinday$positive_ASD <- pos_ASD
+```
+
+```{r}
+#ASD = negative_SD[i] / time_interval[i]
+withinday$negative_SD <- as.numeric(withinday$negative_SD)
+neg_ASD <- vector()
+
+for(i in 1:1425){
+  neg_ASD <- append(neg_ASD, c(withinday$negative_SD[i] / withinday$time_interval_min[i]))
+  
+  i = i + 1
+}
+
+head(neg_ASD)
+
+#create negative ASD variable
+withinday$negative_ASD <- neg_ASD
+```
+
+```{r}
+# scatter plot of ASD x time interval (hour)
+withinday$positive_ASD <- as.numeric(withinday$positive_ASD)
+withinday$negative_ASD <- as.numeric(withinday$negative_ASD)
+
+ggplot(withinday, aes(x = time_interval, y=positive_ASD)) + geom_point(size = 0.5) +
+  ggtitle("Adj. Successive Difference - Positive")
+  
+ggplot(withinday, aes(x = time_interval, y=negative_ASD)) + geom_point(size = 0.5) +
+  ggtitle("Adj. Successive Difference - Negative")
+```
+
+### MSSD - Day
+```{r}
+#initialize MSSD matrix
+
+mssd_day <- matrix(0, 288, 7)
+
+colnames(mssd_day) <- c("id", "group", "day", "event", "weekend", "pos", "neg")
+
+id_ex <- rep((id_names), each=9)
+length(id_ex)
+
+group_ex <- rep((id_group), each=9)
+length(group_ex)
+
+days <- c("1", "2", "3", "4", "5", "6", "7", "8", "9")
+day_ex <- rep(days, times=32)
+length(day_ex)
+
+event <- c("1", "2", "3")
+event_ex <- rep(event, each=3)
+event_ex <- rep(event_ex, times=32)
+
+weekend_vec <- c()
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(d in 1:9){
+    index <- which(EMAdata$id == name & EMAdata$day == d)
+    r <- as.numeric(index[1])
+    
+    weekend_x <- EMAdata$weekend[r] 
+      
+    weekend_vec <- append(weekend_vec, weekend_x)
+  }
+} 
+
+for(i in 1:288){
+  mssd_day[i,1] <- id_ex[i]
+  mssd_day[i,2] <- group_ex[i]
+  mssd_day[i,3] <- day_ex[i]
+  mssd_day[i,4] <- event_ex[i]
+  mssd_day[i,5] <- weekend_vec[i]
+}
+
+mssd_day <- as.data.frame(mssd_day)
+```
+
+```{r}
+# create variable of squared ASD
+withinday$positive_ASD2 <- withinday$positive_ASD
+withinday$negative_ASD2 <- withinday$negative_ASD
+
+for(i in 1:1425){
+  withinday$positive_ASD2[i] <- (withinday$positive_ASD[i])^2
+  withinday$negative_ASD2[i] <- (withinday$negative_ASD[i])^2
+}
+```
+
+```{r}
+mssd_pos <- c()
+mssd_neg <- c()
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(d in 1:9){
+    index <- which(withinday$id == name & withinday$day == d)
+    
+    vec_pos <- c()
+    vec_neg <- c()
+    len <- length(index)
+    
+    for(x in 1:len){ #create vector of ASD2 values under id(i) and day(d)
+      n_pos <- withinday$positive_ASD2[index[x]]
+      vec_pos <- c(vec_pos, n_pos)
+      
+      n_neg <- withinday$negative_ASD2[index[x]]
+      vec_neg <- c(vec_neg, n_neg)
+    }
+    
+    mssd_pos <- append(mssd_pos, mean(vec_pos, na.rm=TRUE)) #save vec of pos MSSD
+    mssd_neg <- append(mssd_neg, mean(vec_neg, na.rm=TRUE)) #save vec of neg MSSD
+  }
+}
+
+for(i in 1:288){
+  mssd_day[i,6] <- mssd_pos[i]
+  mssd_day[i,7] <- mssd_neg[i]
+}
+```
+
+```{r}
+#plot positive mssd
+mssd_day$pos <- as.numeric(mssd_day$pos)
+
+mssdpos_ggplot<- ggplot(data= mssd_day, 
+       aes(y=pos, x=day, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Positive Affect Scores Across Days") + 
+  labs(y = "mssd", x = "day") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdpos_ggplot
+```
+```{r}
+#plot negative mssd
+mssd_day$neg <- as.numeric(mssd_day$neg)
+
+mssdneg_ggplot<- ggplot(data= mssd_day, 
+       aes(y=neg, x=day, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Negative Affect Scores Across Days") + 
+  labs(y = "mssd", x = "day") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdneg_ggplot
+```
+
+### MSSD - Event
+```{r}
+#initialize MSSD matrix
+
+mssd_event <- matrix(0, 96, 5)
+
+colnames(mssd_event) <- c("id", "group", "event", "pos", "neg")
+
+id_ex <- rep((id_names), each=3)
+length(id_ex)
+
+group_ex <- rep((id_group), each=3)
+length(group_ex)
+
+event <- c("Baseline", "Session4", "Post")
+day_ex <- rep(event, times=32)
+length(day_ex)
+
+for(i in 1:96){
+  mssd_event[i,1] <- id_ex[i]
+  mssd_event[i,2] <- group_ex[i]
+  mssd_event[i,3] <- day_ex[i]
+}
+```
+```{r}
+mssd_day <- as.data.frame(mssd_day)
+mssd_day$pos <- as.numeric(mssd_day$pos)
+mssd_day$neg <- as.numeric(mssd_day$neg)
+mssd_event <- as.data.frame(mssd_event)
+
+```
+
+```{r}
+mssd_pos <- c()
+mssd_neg <- c()
+
+for(i in 1:32){
+  name <- id_names[i]
+  for(e in 1:3){
+    index <- which(mssd_day$id == name & mssd_day$event == e)
+    
+    vec_pos <- c()
+    vec_neg <- c()
+    len <- length(index)
+    
+    for(x in 1:len){ #create vector of MSSD values under id(i) and event(e)
+      n_pos <- mssd_day$pos[index[x]]
+      vec_pos <- c(vec_pos, n_pos)
+      
+      n_neg <- mssd_day$neg[index[x]]
+      vec_neg <- c(vec_neg, n_neg)
+    }
+    
+    mssd_pos <- append(mssd_pos, mean(vec_pos, na.rm=TRUE)) #save vec of pos MSSD
+    mssd_neg <- append(mssd_neg, mean(vec_neg, na.rm=TRUE)) #save vec of neg MSSD
+  }
+}
+
+for(i in 1:96){
+  mssd_event[i,4] <- mssd_pos[i]
+  mssd_event[i,5] <- mssd_neg[i]
+}
+```
+
+
+```{r}
+#plot positive mssd
+mssd_event$pos <- as.numeric(mssd_event$pos)
+
+mssdpos_ggplot<- ggplot(data= mssd_event, 
+       aes(y=pos, x=event, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Positive Affect Scores Across Timepoints") + 
+  labs(y = "mssd", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdpos_ggplot
+```
+
+```{r}
+#plot positive mssd
+mssd_event$neg <- as.numeric(mssd_event$neg)
+
+mssdneg_ggplot<- ggplot(data= mssd_event, 
+       aes(y=neg, x=event, color=group, group=id)) + 
+  geom_point() + geom_line() +
+  ggtitle("MSSD of Negative Affect Scores Across Timepoints") + 
+  labs(y = "mssd", x = "timepoint") +
+  scale_color_manual(values = c("lightblue3","darkblue"))
+ 
+mssdneg_ggplot
+```
+
+
+```{r}
+#combine day dataframes
+
+affectdynamics_day <- mssd_day[,1:5]
+affectdynamics_day$mssd_pos <- mssd_day$pos #MSSD
+affectdynamics_day$mssd_neg <- mssd_day$neg
+affectdynamics_day$stddev_pos <- stddev_day$pos #standard dev.
+affectdynamics_day$stddev_neg <- stddev_day$neg
+#Nan to NA
+affectdynamics_day$mssd_pos[is.nan(affectdynamics_day$mssd_pos)] <- NA
+affectdynamics_day$mssd_neg[is.nan(affectdynamics_day$mssd_neg)] <- NA
+```
+
+```{r}
+#combine event dataframes
+stddev_event <- as.data.frame(stddev_event)
+
+affectdynamics_event <- mssd_event[,1:3]
+affectdynamics_event$mssd_pos <- as.numeric(mssd_event$pos) #MSSD
+affectdynamics_event$mssd_neg <- as.numeric(mssd_event$neg)
+affectdynamics_event$stddev_pos <- as.numeric(stddev_event$pos) #standard dev.
+affectdynamics_event$stddev_neg <- as.numeric(stddev_event$neg)
+```
+
+#SD/MSSD Multilevel Model
+
+## Model 1: Event
+
+SD and MSSD averaged across the three days for each timepoint, so you have just one number at each timepoint. then run an HLM looking at if averaged SD/MSSD changes across the three timepoints by group
+
+```{r}
+#check for normality
+
+
+#create grouped boxplot
+ggplot(affectdynamics_event, aes(x=event, y=stddev_pos, fill=group)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("SD") + ggtitle("StdDev of Positive Score x Group")
+
+ggplot(affectdynamics_event, aes(x=event, y=stddev_neg, fill=group)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("SD") + ggtitle("StdDev of Negative Score x Group")
+
+ggplot(affectdynamics_event, aes(x=event, y=mssd_pos, fill=group)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("SD") + ggtitle("MSSD of Positive Score x Group")
+
+ggplot(affectdynamics_event, aes(x=event, y=mssd_neg, fill=group)) + scale_fill_manual(values = c("lightblue3", "dodgerblue4")) + geom_boxplot() + xlab("event") + ylab("SD") + ggtitle("MSSD of Negative Score x Group")
+```
+
+### Normality & Distribution
+```{r}
+describe(affectdynamics_event)
+```
+
+```{r}
+shapiro.test(affectdynamics_event$mssd_pos)
+shapiro.test(affectdynamics_event$mssd_neg)
+shapiro.test(affectdynamics_event$stddev_pos)
+shapiro.test(affectdynamics_event$stddev_neg)
+```
+
+```{r}
+#mssd_pos transformation
+hist(affectdynamics_event$mssd_pos, main="Original")
+affectdynamics_event$mssd_pos_t <- log(affectdynamics_event$mssd_pos)
+hist(affectdynamics_event$mssd_pos_t, main="Log Transformed")
+shapiro.test(affectdynamics_event$mssd_pos_t)
+```
+
+```{r}
+#mssd_neg transformation
+hist(affectdynamics_event$mssd_neg, main="Original")
+affectdynamics_event$mssd_neg_t <- log(affectdynamics_event$mssd_neg)
+hist(affectdynamics_event$mssd_neg_t, main="LogSQRT Transformed")
+shapiro.test(affectdynamics_event$mssd_neg_t)
+```
+
+```{r}
+#stddev_neg transformation
+hist(affectdynamics_event$stddev_neg, main="Original")
+affectdynamics_event$stddev_neg_t <- sqrt(affectdynamics_event$stddev_neg)
+hist(affectdynamics_event$stddev_neg_t, main="SQRT Transformed")
+shapiro.test(affectdynamics_event$stddev_neg_t)
+```
+
+### SD Models
+#### Raw Data
+```{r}
+#SD Positive
+stddevpos_nullmodel <- lmer(stddev_pos ~ 1 + (1|id), data = affectdynamics_event)
+performance::icc(stddevpos_nullmodel)
+```
+ICC indicates MLM
+```{r}
+insight::get_variance(stddevpos_nullmodel)
+```
+
+```{r}
+#SD Positive
+stddevpos_model1 <- lmer(stddev_pos ~ 1 + event + (1|id), data = affectdynamics_event)
+anova(stddevpos_nullmodel, stddevpos_model1)
+
+summary(stddevpos_model1)
+```
+decreased model fit
+```{r}
+#SD Positive
+stddevpos_model2 <- lmer(stddev_pos ~ 1 + event + group + (1|id), data = affectdynamics_event)
+anova(stddevpos_model1, stddevpos_model2)
+summary(stddevpos_model2)
+```
+adding group  decreased model fit
+
+```{r}
+#SD Positive
+stddevpos_model3 <- lmer(stddev_pos ~ 1 + event + group + group*event + (1|id), data = affectdynamics_event)
+anova(stddevpos_model2, stddevpos_model3)
+
+summary(stddevpos_model3)
+```
+decreased model fit
+
+```{r}
+#compare all SD Positive models
+texreg::knitreg(list(stddevpos_nullmodel,
+                     stddevpos_model1, 
+                     stddevpos_model2,
+                     stddevpos_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#SD Negative
+stddevneg_nullmodel <- lmer(stddev_neg ~ 1 + (1|id), data = affectdynamics_event)
+performance::icc(stddevneg_nullmodel)
+```
+ICC indicates MLM
+
+```{r}
+insight::get_variance(stddevneg_nullmodel)
+```
+
+```{r}
+#SD Negative
+stddevneg_model1 <- lmer(stddev_neg ~ 1 + event + (1|id), data = affectdynamics_event)
+anova(stddevneg_nullmodel, stddevneg_model1)
+
+summary(stddevneg_model1)
+```
+sig. increase in model fit
+
+```{r}
+#SD Negative
+stddevneg_model2 <- lmer(stddev_neg ~ 1 + event + group + (1|id), data = affectdynamics_event)
+anova(stddevneg_nullmodel, stddevneg_model2)
+
+summary(stddevneg_model2)
+```
+sig. increase in model fit
+
+```{r}
+#SD Negative
+stddevneg_model3 <- lmer(stddev_neg ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event)
+anova(stddevneg_model2, stddevneg_model3)
+
+summary(stddevneg_model3)
+```
+decrease in model fit
+```{r}
+#compare all SD negstive models
+texreg::knitreg(list(stddevneg_nullmodel,
+                     stddevneg_model1, 
+                     stddevneg_model2,
+                     stddevneg_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+#### Transformed Data
+
+```{r}
+#SD Negative
+stddevneg_nullmodel_t <- lmer(stddev_neg_t ~ 1 + (1|id), data = affectdynamics_event)
+performance::icc(stddevneg_nullmodel_t)
+```
+ICC indicates MLM
+
+```{r}
+insight::get_variance(stddevneg_nullmodel_t)
+```
+
+```{r}
+#SD Negative
+stddevneg_model1_t <- lmer(stddev_neg_t ~ 1 + event + (1|id), data = affectdynamics_event)
+anova(stddevneg_nullmodel_t, stddevneg_model1_t)
+```
+sig. increase in model fit
+
+```{r}
+#SD Negative
+stddevneg_model2_t <- lmer(stddev_neg_t ~ 1 + event + group + (1|id), data = affectdynamics_event)
+anova(stddevneg_model1_t, stddevneg_model2_t)
+```
+decrease in model fit
+
+```{r}
+#SD Negative
+stddevneg_model3_t <- lmer(stddev_neg_t ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event)
+anova(stddevneg_model1_t, stddevneg_model3_t)
+```
+decrease in model fit
+```{r}
+summary(stddevneg_model3_t)
+```
+
+```{r}
+#compare all SD negative models
+texreg::knitreg(list(stddevneg_nullmodel_t,
+                     stddevneg_model1_t, 
+                     stddevneg_model2_t,
+                     stddevneg_model3_t),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+### MSSD Models
+#### Raw Data
+```{r}
+#remove missing data in y
+affectdynamics_event1 <- affectdynamics_event[-54,]
+affectdynamics_event1 <- affectdynamics_event1[-95,]
+```
+
+```{r}
+#MSSD Positive
+mssdpos_nullmodel <- lmer(mssd_pos ~ 1 + (1|id), data = affectdynamics_event1)
+performance::icc(mssdpos_nullmodel)
+```
+ICC suggests MLM is not indicated
+```{r}
+insight::get_variance(mssdpos_nullmodel)
+```
+
+```{r}
+#MSSD Positive
+mssdpos_model1 <- lmer(mssd_pos ~ 1 + event + (1|id), data = affectdynamics_event1)
+anova(mssdpos_nullmodel, mssdpos_model1)
+
+summary(mssdpos_model1)
+```
+decreased model fit
+```{r}
+#MSSD Positive
+mssdpos_model2 <- lmer(mssd_pos ~ 1 + event + group + (1|id), data = affectdynamics_event1)
+anova(mssdpos_nullmodel, mssdpos_model2)
+
+summary(mssdpos_model2)
+```
+decreased model fit
+
+```{r}
+#MSSD Positive
+mssdpos_model3 <- lmer(mssd_pos ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event1)
+anova(mssdpos_model2, mssdpos_model3)
+
+summary(mssdpos_model3)
+```
+decreased model fit
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdpos_nullmodel,
+                     mssdpos_model1, 
+                     mssdpos_model2,
+                     mssdpos_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+Negative
+```{r}
+#MSSD Negative
+mssdneg_nullmodel <- lmer(mssd_neg ~ 1 + (1|id), data = affectdynamics_event1)
+performance::icc(mssdneg_nullmodel)
+```
+ICC suggests MLM is not indicated
+
+```{r}
+insight::get_variance(mssdneg_nullmodel)
+```
+
+```{r}
+#MSSD Negative
+mssdneg_model1 <- lmer(mssd_neg ~ 1 + event + (1|id), data = affectdynamics_event1)
+anova(mssdneg_nullmodel, mssdneg_model1)
+
+summary(mssdneg_model1)
+```
+decreased model fit
+```{r}
+#MSSD Negative
+mssdneg_model2 <- lmer(mssd_neg ~ 1 + event + group + (1|id), data = affectdynamics_event1)
+anova(mssdneg_nullmodel, mssdneg_model2)
+
+summary(mssdneg_model2)
+```
+decreased model fit
+
+```{r}
+#MSSD Negative
+mssdneg_model3 <- lmer(mssd_neg ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event1)
+anova(mssdneg_model2, mssdneg_model3)
+
+summary(mssdneg_model3)
+```
+decreased model fit
+```{r}
+#compare all MSSD negative models
+texreg::knitreg(list(mssdneg_nullmodel,
+                     mssdneg_model1, 
+                     mssdneg_model2,
+                     mssdneg_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+#### Transformed Data
+```{r}
+#MSSD Positive
+mssdpos_nullmodel_t <- lmer(mssd_pos_t ~ 1 + (1|id), data = affectdynamics_event1)
+performance::icc(mssdpos_nullmodel_t)
+```
+ICC suggests MLM is not indicated
+```{r}
+insight::get_variance(mssdpos_nullmodel_t)
+```
+
+```{r}
+#MSSD Positive
+mssdpos_model1_t <- lmer(mssd_pos_t ~ 1 + event + (1|id), data = affectdynamics_event1)
+anova(mssdpos_nullmodel_t, mssdpos_model1_t)
+```
+decreased model fit
+```{r}
+#MSSD Positive
+mssdpos_model2_t <- lmer(mssd_pos_t ~ 1 + event + group + (1|id), data = affectdynamics_event1)
+anova(mssdpos_nullmodel_t, mssdpos_model2_t)
+```
+decreased model fit
+
+```{r}
+#MSSD Positive
+mssdpos_model3_t <- lmer(mssd_pos_t ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event1)
+anova(mssdpos_nullmodel_t, mssdpos_model3_t)
+```
+decreased model fit
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdpos_nullmodel_t,
+                     mssdpos_model1_t, 
+                     mssdpos_model2_t,
+                     mssdpos_model3_t),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+Negative
+```{r}
+#MSSD Negative
+mssdneg_nullmodel_t <- lmer(mssd_neg_t ~ 1 + (1|id), data = affectdynamics_event1)
+performance::icc(mssdneg_nullmodel_t)
+```
+ICC suggests MLM is not indicated
+
+```{r}
+insight::get_variance(mssdneg_nullmodel_t)
+```
+
+```{r}
+#MSSD Negative
+mssdneg_model1_t <- lmer(mssd_neg_t ~ 1 + event + (1|id), data = affectdynamics_event1)
+anova(mssdneg_nullmodel_t, mssdneg_model1_t)
+```
+decreased model fit
+```{r}
+#MSSD Negative
+mssdneg_model2_t <- lmer(mssd_neg_t ~ 1 + event + group + (1|id), data = affectdynamics_event1)
+anova(mssdneg_nullmodel_t, mssdneg_model2_t)
+```
+decreased model fit
+
+```{r}
+#MSSD Negative
+mssdneg_model3_t <- lmer(mssd_neg_t ~ 1 + event + group + event*group + (1|id), data = affectdynamics_event1)
+anova(mssdneg_nullmodel_t, mssdneg_model3_t)
+```
+decreased model fit
+```{r}
+#compare all MSSD negative models
+texreg::knitreg(list(mssdneg_nullmodel_t,
+                     mssdneg_model1_t, 
+                     mssdneg_model2_t,
+                     mssdneg_model3_t),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M2: Event*Group"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+
+## Model 2: Day
+### Normality & Distribution
+```{r}
+describe(affectdynamics_day)
+```
+
+```{r}
+shapiro.test(affectdynamics_day$mssd_pos)
+shapiro.test(affectdynamics_day$mssd_neg)
+shapiro.test(affectdynamics_day$stddev_pos)
+shapiro.test(affectdynamics_day$stddev_neg)
+```
+
+```{r}
+#mssd_pos transformation
+hist(affectdynamics_day$mssd_pos, main="Original")
+affectdynamics_day$mssd_pos_t <- log(affectdynamics_day$mssd_pos)
+hist(affectdynamics_day$mssd_pos_t, main="Log Transformed")
+shapiro.test(affectdynamics_day$mssd_pos_t)
+```
+```{r}
+#mssd_neg transformation
+hist(affectdynamics_day$mssd_neg, main="Original")
+affectdynamics_day$mssd_neg_t <- log(affectdynamics_day$mssd_neg)
+hist(affectdynamics_day$mssd_neg_t, main="Log Transformed")
+shapiro.test(affectdynamics_day$mssd_neg_t)
+```
+```{r}
+#stddev_pos transformation
+hist(affectdynamics_day$stddev_pos, main="Original")
+affectdynamics_day$stddev_pos_t <- sqrt(affectdynamics_day$stddev_pos)
+hist(affectdynamics_day$stddev_pos_t, main="SQRT Transformed")
+shapiro.test(affectdynamics_day$stddev_pos_t)
+```
+```{r}
+#stddev_neg transformation
+hist(affectdynamics_day$stddev_neg, main="Original")
+affectdynamics_day$stddev_neg_t <- sqrt(affectdynamics_day$stddev_neg)
+hist(affectdynamics_day$stddev_neg_t, main="SQRT Transformed")
+shapiro.test(affectdynamics_day$stddev_neg_t)
+```
+
+### SD Models
+#### Raw Data
+```{r}
+#SD Positive
+stddevpos2_nullmodel <- lmer(stddev_pos ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(stddevpos2_nullmodel)
+```
+ICC indicates use of MLM
+```{r}
+insight::get_variance(stddevpos2_nullmodel)
+```
+
+```{r}
+#SD Positive
+stddevpos2_model1 <- lmer(stddev_pos ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel, stddevpos2_model1)
+```
+decreased model fit
+```{r}
+#SD Positive
+stddevpos2_model2 <- lmer(stddev_pos ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel, stddevpos2_model2)
+```
+decreased model fit
+```{r}
+#SD Positive
+stddevpos2_model3 <- lmer(stddev_pos ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel, stddevpos2_model3)
+```
+decreased model fit
+
+```{r}
+#SD Positive
+stddevpos2_model4 <- lmer(stddev_pos ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel, stddevpos2_model4)
+```
+decreased model fit
+
+```{r}
+#compare all SD positive models
+texreg::knitreg(list(stddevpos2_nullmodel,
+                     stddevpos2_model1, 
+                     stddevpos2_model2,
+                     stddevpos2_model3,
+                     stddevpos2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#SD Negative
+stddevneg2_nullmodel <- lmer(stddev_neg ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(stddevneg2_nullmodel)
+```
+ICC indicates use of MLM
+
+```{r}
+insight::get_variance(stddevneg2_nullmodel)
+```
+
+```{r}
+#SD Negative
+stddevneg2_model1 <- lmer(stddev_neg ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(stddevneg2_nullmodel, stddevneg2_model1)
+```
+sig. increase in model fit
+```{r}
+#SD Negative
+stddevneg2_model2 <- lmer(stddev_neg ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1, stddevneg2_model2)
+```
+decrease in model fit
+```{r}
+#SD Negative
+stddevneg2_model3 <- lmer(stddev_neg ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1, stddevneg2_model3)
+```
+decrease in model fit
+```{r}
+#SD Negative
+stddevneg2_model4 <- lmer(stddev_neg ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1, stddevneg2_model4)
+```
+decrease in model fit
+
+```{r}
+#compare all SD positive models
+texreg::knitreg(list(stddevneg2_nullmodel,
+                     stddevneg2_model1, 
+                     stddevneg2_model2,
+                     stddevneg2_model3,
+                     stddevneg2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+#### Transformed Data
+```{r}
+#SD Positive
+stddevpos2_nullmodel_t <- lmer(stddev_pos_t ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(stddevpos2_nullmodel_t)
+```
+ICC indicates use of MLM
+```{r}
+insight::get_variance(stddevpos2_nullmodel_t)
+```
+
+```{r}
+#SD Positive
+stddevpos2_model1_t <- lmer(stddev_pos_t ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel_t, stddevpos2_model1_t)
+```
+decreased model fit
+```{r}
+#SD Positive
+stddevpos2_model2_t <- lmer(stddev_pos_t ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel_t, stddevpos2_model2_t)
+```
+decreased model fit
+```{r}
+#SD Positive
+stddevpos2_model3_t <- lmer(stddev_pos_t ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel_t, stddevpos2_model3_t)
+```
+decreased model fit
+
+```{r}
+#SD Positive
+stddevpos2_model4_t <- lmer(stddev_pos_t ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(stddevpos2_nullmodel_t, stddevpos2_model4_t)
+```
+decreased model fit
+
+```{r}
+#compare all SD positive models
+texreg::knitreg(list(stddevpos2_nullmodel_t,
+                     stddevpos2_model1_t, 
+                     stddevpos2_model2_t,
+                     stddevpos2_model3_t,
+                     stddevpos2_model4_t),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#SD Negative
+stddevneg2_nullmodel_t <- lmer(stddev_neg_t ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(stddevneg2_nullmodel_t)
+```
+ICC indicates use of MLM
+
+```{r}
+insight::get_variance(stddevneg2_nullmodel_t)
+```
+
+```{r}
+#SD Negative
+stddevneg2_model1_t <- lmer(stddev_neg_t ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(stddevneg2_nullmodel_t, stddevneg2_model1_t)
+```
+sig. increase in model fit
+```{r}
+#SD Negative
+stddevneg2_model2_t <- lmer(stddev_neg_t ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1_t, stddevneg2_model2_t)
+```
+decrease in model fit
+```{r}
+#SD Negative
+stddevneg2_model3_t <- lmer(stddev_neg_t ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1_t, stddevneg2_model3_t)
+```
+decrease in model fit
+```{r}
+#SD Negative
+stddevneg2_model4_t <- lmer(stddev_neg_t ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(stddevneg2_model1_t, stddevneg2_model4_t)
+```
+decrease in model fit
+
+```{r}
+#compare all SD positive models
+texreg::knitreg(list(stddevneg2_nullmodel_t,
+                     stddevneg2_model1_t, 
+                     stddevneg2_model2_t,
+                     stddevneg2_model3_t,
+                     stddevneg2_model4_t),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+### MSSD Models
+#### Raw Data
+```{r}
+#MSSD Positive
+mssdpos2_nullmodel <- lmer(mssd_pos ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(mssdpos2_nullmodel)
+```
+does not indicate use of MLM
+```{r}
+insight::get_variance(mssdpos2_nullmodel)
+```
+
+```{r}
+#MSSD Positive
+mssdpos2_model1 <- lmer(mssd_pos ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model1)
+```
+decrease in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model2 <- lmer(mssd_pos ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model2)
+```
+decrease in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model3 <- lmer(mssd_pos ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model3)
+```
+sig. increase in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model4 <- lmer(mssd_pos ~ 1 + event + group + weekend + event*group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model4)
+```
+decrease in model fit
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdpos2_nullmodel,
+                     mssdpos2_model1, 
+                     mssdpos2_model2,
+                     mssdpos2_model3,
+                     mssdpos2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#MSSD Negative
+mssdneg2_nullmodel <- lmer(mssd_neg ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(mssdneg2_nullmodel)
+```
+
+```{r}
+insight::get_variance(mssdneg2_nullmodel)
+```
+
+does not indicate MLM
+```{r}
+#MSSD Negative
+mssdneg2_model1 <- lmer(mssd_neg ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model1)
+```
+decrease in model fit
+```{r}
+#MSSD Negative
+mssdneg2_model2 <- lmer(mssd_neg ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model2)
+```
+decrease in model fit
+```{r}
+#MSSD Negative
+mssdneg2_model3 <- lmer(mssd_neg ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model3)
+```
+sig. increase in model fit
+
+```{r}
+#MSSD Negative
+mssdneg2_model4 <- lmer(mssd_neg ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model4)
+```
+Increase in model fit !
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdneg2_nullmodel,
+                     mssdneg2_model1, 
+                     mssdneg2_model2,
+                     mssdneg2_model3,
+                     mssdneg2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+#### Transformed Data
+```{r}
+#transformation created NA in y
+affectdynamics_day_t <- subset(affectdynamics_day)
+```
+
+```{r}
+#MSSD Positive
+mssdpos2_nullmodel_t <- lmer(mssd_pos ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(mssdpos2_nullmodel_t)
+```
+does not indicate use of MLM
+```{r}
+insight::get_variance(mssdpos2_nullmodel)
+```
+
+```{r}
+#MSSD Positive
+mssdpos2_model1 <- lmer(mssd_pos ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model1)
+```
+decrease in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model2 <- lmer(mssd_pos ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model2)
+```
+decrease in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model3 <- lmer(mssd_pos ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model3)
+```
+sig. increase in model fit
+```{r}
+#MSSD Positive
+mssdpos2_model4 <- lmer(mssd_pos ~ 1 + event + group + weekend + event*group + (1|id), data = affectdynamics_day)
+anova(mssdpos2_nullmodel, mssdpos2_model4)
+```
+decrease in model fit
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdpos2_nullmodel,
+                     mssdpos2_model1, 
+                     mssdpos2_model2,
+                     mssdpos2_model3,
+                     mssdpos2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#MSSD Negative
+mssdneg2_nullmodel_t <- lmer(mssd_neg_t ~ 1 + (1|id), data = affectdynamics_day)
+performance::icc(mssdneg2_nullmodel_t)
+```
+
+```{r}
+insight::get_variance(mssdneg2_nullmodel)
+```
+
+does not indicate MLM
+```{r}
+#MSSD Negative
+mssdneg2_model1 <- lmer(mssd_neg ~ 1 + event + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model1)
+```
+decrease in model fit
+```{r}
+#MSSD Negative
+mssdneg2_model2 <- lmer(mssd_neg ~ 1 + event + group + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model2)
+```
+decrease in model fit
+```{r}
+#MSSD Negative
+mssdneg2_model3 <- lmer(mssd_neg ~ 1 + event + group + event*group + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model3)
+```
+sig. increase in model fit
+
+```{r}
+#MSSD Negative
+mssdneg2_model4 <- lmer(mssd_neg ~ 1 + event + group + event*group + weekend + (1|id), data = affectdynamics_day)
+anova(mssdneg2_nullmodel, mssdneg2_model4)
+```
+Increase in model fit !
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdneg2_nullmodel,
+                     mssdneg2_model1, 
+                     mssdneg2_model2,
+                     mssdneg2_model3,
+                     mssdneg2_model4),
+                custom.model.names = c("M0: Null",
+                                       "M1: Event",
+                                       "M2: Event + Group",
+                                       "M3: Event*Group",
+                                       "M4: + Weekend"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+## Model 3: Instance
+```{r}
+#change instance from 1-15 to repeating 1-5
+
+for(r in 1:1425){
+  i <- withinday$instance[r]
+  
+  if(i == 6 | i == 11){
+    withinday$instance[r] <- 1
+  }
+  if(i == 7 | i == 12){
+    withinday$instance[r] <- 2
+  }
+  if(i == 8 | i == 13){
+    withinday$instance[r] <- 3
+  }
+  if(i == 9 | i == 14){
+    withinday$instance[r] <- 4
+  }
+  if(i == 10 | i == 15){
+    withinday$instance[r] <- 5
+  }
+}
+```
+
+### Successive Difference
+#### Raw Data
+```{r}
+#SD Positive
+mssdpos3_nullmodel <- lmer(positive_SD ~ 1 + (1|id), data=withinday)
+performance::icc(mssdpos3_nullmodel)
+```
+
+```{r}
+insight::get_variance(mssdpos3_nullmodel)
+```
+```{r}
+#SD Positive
+mssdpos3_model3 <- lmer(positive_SD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + (1|id), data=withinday)
+anova(mssdpos3_nullmodel, mssdpos3_model3)
+```
+```{r}
+#SD Positive
+mssdpos3_model4 <- lmer(positive_SD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + weekend + (1|id), data=withinday)
+anova(mssdpos3_nullmodel, mssdpos3_model4)
+```
+```{r}
+#SD Positive
+mssdpos3_model5 <- lmer(positive_SD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + weekend + instance +  (1|id), data=withinday)
+anova(mssdpos3_nullmodel, mssdpos3_model5)
+```
+
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdpos3_nullmodel,
+                     mssdpos3_model3,
+                     mssdpos3_model4,
+                     mssdpos3_model5),
+                custom.model.names = c("M0: Null",
+                                       "M1","M2","M3"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+mssdneg3_nullmodel <- lmer(negative_SD ~ 1 + (1|id), data=withinday)
+performance::icc(mssdneg3_nullmodel)
+```
+
+```{r}
+insight::get_variance(mssdneg3_nullmodel)
+```
+```{r}
+mssdneg3_model3 <- lmer(negative_SD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + (1|id), data=withinday)
+anova(mssdneg3_nullmodel, mssdneg3_model3)
+```
+```{r}
+mssdneg3_model4 <- lmer(negative_SD ~ 1 +  event + enrollmentgroup + event*enrollmentgroup + weekend + (1|id), data=withinday)
+anova(mssdneg3_nullmodel, mssdneg3_model4)
+```
+```{r}
+mssdneg3_model5 <- lmer(negative_SD ~ 1 +  event + enrollmentgroup + event*enrollmentgroup + weekend + instance + (1|id), data=withinday)
+anova(mssdneg3_nullmodel, mssdneg3_model5)
+```
+```{r}
+#compare all MSSD positive models
+texreg::knitreg(list(mssdneg3_nullmodel,
+                     mssdneg3_model3,
+                     mssdneg3_model4,
+                     mssdneg3_model5),
+                custom.model.names = c("M0: Null",
+                                       "M1","M2","M3"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+#### Transformed Data
+### Adj. Successive Difference
+#### Raw Data
+```{r}
+#ASD Positive
+mssdpos4_nullmodel <- lmer(positive_ASD ~ 1 + (1|id), data=withinday)
+performance::icc(mssdpos4_nullmodel)
+```
+
+```{r}
+insight::get_variance(mssdpos4_nullmodel)
+```
+
+```{r}
+#ASD Positive
+mssdpos4_model1 <- lmer(positive_ASD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + (1|id), data=withinday)
+anova(mssdpos4_nullmodel, mssdpos4_model1)
+```
+```{r}
+#ASD Positive
+mssdpos4_model2 <- lmer(positive_ASD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + weekend +  (1|id), data=withinday)
+anova(mssdpos4_nullmodel, mssdpos4_model2)
+```
+```{r}
+#ASD Positive
+mssdpos4_model3 <- lmer(positive_ASD ~ 1+ event + enrollmentgroup + event*enrollmentgroup + weekend + instance + (1|id), data=withinday)
+anova(mssdpos4_nullmodel, mssdpos4_model3)
+```
+```{r}
+#compare all ASD positive models
+texreg::knitreg(list(mssdpos4_nullmodel,
+                     mssdpos4_model1, 
+                     mssdpos4_model2,
+                     mssdpos4_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1","M2","M3"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+
+```{r}
+#ASD Negative
+mssdneg4_nullmodel <- lmer(negative_ASD ~ 1 + (1|id), data=withinday)
+performance::icc(mssdneg4_nullmodel)
+```
+
+```{r}
+insight::get_variance(mssdneg4_nullmodel)
+```
+
+```{r}
+#ASD Negative
+mssdneg4_model1 <- lmer(negative_ASD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + (1|id), data=withinday)
+anova(mssdneg4_nullmodel, mssdneg4_model1)
+```
+```{r}
+#ASD Negative
+mssdneg4_model2 <- lmer(negative_ASD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + weekend + (1|id), data=withinday)
+anova(mssdneg4_nullmodel, mssdneg4_model2)
+```
+```{r}
+#ASD Negative
+mssdneg4_model3 <- lmer(negative_ASD ~ 1 + event + enrollmentgroup + event*enrollmentgroup + weekend + instance + (1|id), data=withinday)
+anova(mssdneg4_nullmodel, mssdneg4_model3)
+```
+```{r}
+#compare all ASD negative models
+texreg::knitreg(list(mssdneg4_nullmodel,
+                     mssdneg4_model1, 
+                     mssdneg4_model2,
+                     mssdneg4_model3),
+                custom.model.names = c("M0: Null",
+                                       "M1","M2","M3"),
+                caption            = "Nested Models: Fixed effects via ML",
+                caption.above      = TRUE,
+                single.row         = TRUE)
+```
+#### Transformed Data
+
+

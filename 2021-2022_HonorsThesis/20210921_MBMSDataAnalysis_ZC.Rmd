@@ -1,0 +1,303 @@
+---
+title: "prepostsessiondata_acrosssession-analysis"
+output: html_document
+---
+
+The second analysis will be a linear mixed model of PANAS and IOS scores across the individual sessions, from Start (0) to End (1). 
+
+**Steps of analysis:**
+1. Load data frame of Start data
+2. Run descriptive statistics of change in panas_pos, panas_neg, and ios
+    a. Score means by Session
+    b. Score means by ID
+    c. Boxplot of Scores over Session, by ID
+    d. QQ plot of Scores over Session, by ID
+    e. Check for outliers 
+    f. Check for normality 
+3. Run repeated measures ANOVA to establish significant difference between scores across individual sessions
+    a. gather data frame by time
+    b. run anova with unchanged df
+    c. run anova with outliers removed
+4. Run Linear Mixed Models
+    a. plot data 
+    b. fit a mixed model
+    c. calculate confidence intervals
+    d. plot data with model estimate
+    
+Load necessary packages
+```{r}
+library(tidyr)
+library(tidyverse)
+library(tidyREDCap)
+library(tibble)
+library(dplyr)
+library(data.table)
+library(lme4)
+library(nlme)
+library(sjlabelled)
+library(sjPlot)
+library(sjmisc)
+library(qwraps2)
+library(rstatix)
+library(ggpubr)
+```
+
+1. Load data
+```{r}
+#import data (note RMarkdown_filter should be run first)
+print(PrePostData)
+```
+
+2. Summary Statistics 
+```{r}
+#Time Means#
+Time_Means <- as_tibble(
+  PrePostData %>%
+    group_by(time) %>%
+    get_summary_stats(panas_pos, panas_neg, ios, type = "mean_sd"))
+
+print(Time_Means)
+
+write.csv(Time_Means,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\data\\StartEnd_timemeans.csv", row.names = FALSE)
+```
+
+```{r}
+#Create a box plot: PANAS POS
+bxp_pos_startend <- ggboxplot(PrePostData, x= 'time', y= 'panas_pos', add="point", title= "PANAS Positive Scores across Session") 
+bxp_pos_startend
+
+#Save box plot: PANAS POS
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_panaspos_bxplot.png", plot = bxp_pos_startend, scale = 1)
+
+#Create a box plot: PANAS NEG
+bxp_neg_startend <- ggboxplot(PrePostData, x= 'time', y= 'panas_neg', add="point", title= "PANAS Negative Scores across Session") 
+bxp_neg_startend
+
+#Save box plot: PANAS POS
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_panasneg_bxplot.png", plot = bxp_neg_startend, scale = 1)
+
+#Create a box plot: PANAS POS
+bxp_ios_startend <- ggboxplot(PrePostData, x= 'time', y= 'ios', add="point", title= "IOS Scores across Session") 
+bxp_ios_startend
+
+#Save box plot: PANAS POS
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_ios_bxplot.png", plot = bxp_ios_startend, scale = 1)
+```
+
+```{r}
+#Check for Outliers
+outliers_panaspos_startend <- as_tibble(
+  PrePostData%>%
+  group_by(time) %>%
+  identify_outliers(panas_pos))
+
+outliers_panasneg_startend <- as_tibble(
+  PrePostData%>%
+  group_by(time) %>%
+  identify_outliers(panas_neg))
+
+outliers_ios_startend <- as_tibble(
+  PrePostData%>%
+  group_by(time) %>%
+  identify_outliers(ios))
+
+outliers_startend <- full_join(outliers_panaspos_startend, outliers_panasneg_startend)
+outliers_startend <- full_join(outliers_startend, outliers_ios_startend)
+print(outliers_startend)
+
+write.csv(outliers_startend,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\data\\StartEnd_Outliers.csv", row.names = FALSE)
+```
+
+```{r}
+#Create QQ plot: PANAS POS
+qqplot_panaspos <- ggqqplot(PrePostData, "panas_pos", ggtheme = theme_bw()) + facet_grid(time ~ session, labeller = "label_both")
+
+qqplot_panaspos
+
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_panaspos_qqplot.png", plot = qqplot_panaspos, scale = 1)
+
+#Create QQ plot: PANAS POS
+qqplot_panasneg <- ggqqplot(PrePostData, "panas_neg", ggtheme = theme_bw()) + facet_grid(time ~ session, labeller = "label_both")
+
+qqplot_panasneg
+
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_panasneg_qqplot.png", plot = qqplot_panasneg, scale = 1)
+
+#Create QQ plot: PANAS POS
+qqplot_ios <- ggqqplot(PrePostData, "ios", ggtheme = theme_bw()) + facet_grid(time ~ session, labeller = "label_both")
+
+qqplot_ios
+
+ggsave("C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\visualization\\StartEnd_ios_qqplot.png", plot = qqplot_ios, scale = 1)
+```
+ 
+
+3. Run repeated measures ANOVA across individual sessions 
+
+```{r}
+#PANAS_POS
+anova_panaspos_startend <- PrePostData %>%
+  group_by(session) %>%
+  anova_test(dv = panas_pos, wid = id, within = time) 
+  
+anova_panaspos_startend <- as_tibble(anova_panaspos_startend)
+get_anova_table(anova_panaspos_startend)
+
+write.csv(anova_panaspos_startend,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\data\\StartEnd_panaspos_anova.csv", row.names = FALSE)
+```
+
+
+```{r}
+#PANAS_NEG
+anova_panasneg_startend <- PrePostData %>%
+  group_by(session) %>%
+  anova_test(dv = panas_neg, wid = id, within = time) 
+
+anova_panasneg_startend <- as_tibble(anova_panasneg_startend)  
+get_anova_table(anova_panasneg_startend)
+
+write.csv(anova_panasneg_startend,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\data\\StartEnd_panasneg_anova.csv", row.names = FALSE)
+```
+
+```{r}
+#IOS
+anova_ios_startend <- PrePostData %>%
+  group_by(session) %>%
+  anova_test(dv = ios, wid = id, within = time) 
+  
+anova_ios_startend <- as_tibble(anova_ios_startend)
+get_anova_table(anova_ios_startend)
+
+write.csv(anova_ios_startend,"C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\data\\StartEnd_ios_anova.csv", row.names = FALSE)
+```
+4. Run a mixed model analysis
+
+```{r}
+#Fit mixed model 1
+## Terms: Session, Random: id
+lmm_panaspos<- lmer(panas_pos ~ session + (1|id), data=PrePostData)
+
+lmm_panasneg <- lmer(panas_neg ~ session + (1|id), data=PrePostData)
+
+lmm_ios <-  lmer(ios ~ session + (1|id), data=PrePostData)
+
+#Create table for model summaries
+tab_model(lmm_panaspos, lmm_panasneg, lmm_ios, show.df = TRUE)
+
+```
+
+```{r}
+#Fit mixed model 2
+## Terms: Session, Time Random: id
+lmm_panaspos<- lmer(panas_pos ~ time + (1|id), data=PrePostData)
+
+lmm_panasneg <- lmer(panas_neg ~ time + (1|id), data=PrePostData)
+
+lmm_ios <-  lmer(ios ~ time+ (1|id), data=PrePostData)
+
+#Create table for model summaries
+tab_model(lmm_panaspos, lmm_panasneg, lmm_ios, show.df = TRUE)
+```
+
+```{r}
+##PANAS_POS PLOT - Total##
+
+#create CI lines to plot
+ci_panaspos <- confint(lmm_panaspos, method="boot", nsim=10)
+ci_panaspos <- tibble::rownames_to_column(data.frame(ci_panaspos), "Term") 
+colnames(ci_panaspos)<- c("Term", "CI 2.5%", "CI 97.5%")
+as.tibble(ci_panaspos)
+
+#Plot model 
+panaspos_ggplot<- ggplot(data= PrePostData, 
+       aes(y=panas_pos, x=time, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  scale_color_manual(values = c("lightblue1","dodgerblue2","lightsteelblue2", "steelblue1","slategray2","lightsteelblue1","lightblue2","lightskyblue2","lightskyblue1","paleturquoise3","paleturquoise1","royalblue1"))+
+  ggtitle("Positive PANAS Scores from Session Start to Session End") + 
+  theme(legend.position = "none") + 
+  scale_x_discrete(breaks = c(0, 1))+
+  geom_abline(intercept = fixef(lmm_panaspos)[1], #Regression Line (RL).
+              slope=fixef(lmm_panaspos)[2], col="red") +                
+  geom_abline(intercept = ci_panaspos$`CI 97.5%`[3], 
+              slope=ci_panaspos$`CI 97.5%`[4], col="black") + #Upper Bound of RL
+  geom_abline(intercept = ci_panaspos$`CI 2.5%`[3], 
+              slope=ci_panaspos$`CI 2.5%`[4], col="black") #Lower Bound of RL
+
+panaspos_ggplot
+
+#save plot
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\acrosssession_modelplot_panaspos.png", plot = panaspos_ggplot ,scale = 1)
+```
+```{r}
+##PANAS_NEG PLOT - Total##
+
+#create CI lines to plot
+ci_panasneg <- confint(lmm_panasneg, method="boot", nsim=10)
+ci_panasneg <- tibble::rownames_to_column(data.frame(ci_panasneg), "Term") 
+colnames(ci_panasneg)<- c("Term", "CI 2.5%", "CI 97.5%")
+as.tibble(ci_panasneg)
+
+#Plot model 
+panasneg_ggplot<- ggplot(data= PrePostData, 
+       aes(y=panas_neg, x=time, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  scale_color_manual(values = c("lightblue1","dodgerblue2","lightsteelblue2", "steelblue1","slategray2","lightsteelblue1","lightblue2","lightskyblue2","lightskyblue1","paleturquoise3","paleturquoise1","royalblue1"))+
+  ggtitle("Negative PANAS Scores from Session Start to Session End") + 
+  theme(legend.position = "none") + 
+  scale_x_discrete(breaks = c(0, 1))+
+  geom_abline(intercept = fixef(lmm_panasneg)[1], #Regression Line (RL).
+              slope=fixef(lmm_panasneg)[2], col="red") +                
+  geom_abline(intercept = ci_panasneg$`CI 97.5%`[3], 
+              slope=ci_panasneg$`CI 97.5%`[4], col="black") + #Upper Bound of RL
+  geom_abline(intercept = ci_panasneg$`CI 2.5%`[3], 
+              slope=ci_panasneg$`CI 2.5%`[4], col="black") #Lower Bound of RL
+
+panasneg_ggplot
+
+#save plot
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\acrosssession_modelplot_panasneg.png", plot = panasneg_ggplot ,scale = 1)
+```
+```{r}
+##IOS PLOT - Total##
+
+#create CI lines to plot
+ci_ios <- confint(lmm_ios, method="boot", nsim=10)
+ci_ios <- tibble::rownames_to_column(data.frame(ci_ios), "Term") 
+colnames(ci_ios)<- c("Term", "CI 2.5%", "CI 97.5%")
+as.tibble(ci_ios)
+
+#Plot model 
+ios_ggplot<- ggplot(data= PrePostData, 
+       aes(y=ios, x=time, color=id, group=id)) + 
+  geom_point() + geom_line() +
+  scale_color_manual(values = c("lightblue1","dodgerblue2","lightsteelblue2", "steelblue1","slategray2","lightsteelblue1","lightblue2","lightskyblue2","lightskyblue1","paleturquoise3","paleturquoise1","royalblue1"))+
+  ggtitle("IOS Scores from Session Start to Session End") + 
+  theme(legend.position = "none") + 
+  scale_x_discrete(breaks = c(0, 1))+
+  geom_abline(intercept = fixef(lmm_ios)[1], #Regression Line (RL).
+              slope=fixef(lmm_ios)[2], col="red") +                
+  geom_abline(intercept = ci_ios$`CI 97.5%`[3], 
+              slope=ci_ios$`CI 97.5%`[4], col="black") + #Upper Bound of RL
+  geom_abline(intercept = ci_ios$`CI 2.5%`[3], 
+              slope=ci_ios$`CI 2.5%`[4], col="black") #Lower Bound of RL
+
+ios_ggplot
+
+#save plot
+ggsave(filename = "C:\\Users\\19149\\Documents\\R\\win-library\\4.1\\MBMS-Data-Analysis-\\MBMS-Data-Analysis-\\thesis\\acrosssession_modelplot_ios.png", plot = ios_ggplot ,scale = 1)
+```
+```{r}
+lattice::xyplot(panas_pos ~ time | session, groups = id, data = PrePostData, type=c('p','r'), auto.key=F)
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+
+

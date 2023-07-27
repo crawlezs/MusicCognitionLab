@@ -1,0 +1,18 @@
+"Record ID","Event Name","Repeat Instrument","Repeat Instance","Survey Identifier","Survey Timestamp",Distressed,Excited,Upset,Scared,Enthusiastic,Alert,Inspired,Nervous,Determined,Afraid,Complete?
+12015,"Baseline (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord,"Baseline (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord,"Session 4 (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord,"Post (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord,"Baseline (Arm 2: Phase 2)",PANAS-EMA,1,,,,,,,,,,,,,Incomplete
+DummyTestRecord,"Baseline (Arm 2: Phase 2)",PANAS-EMA,2,,"2021-06-09 15:05:26","A little","A little","A little","A little","A little","A little","A little","A little","A little","A little",Complete
+DummyTestRecord,"Baseline (Arm 2: Phase 2)",PANAS-EMA,3,,,,,,,,,,,,,Incomplete
+DummyTestRecord,"Session 4 (Arm 2: Phase 2)",PANAS-EMA,1,,"2021-06-15 10:16:55",Extremely,Extremely,Extremely,Extremely,Extremely,Extremely,Extremely,Extremely,Extremely,Extremely,Complete
+DummyTestRecord,"Session 4 (Arm 2: Phase 2)",PANAS-EMA,2,,,,,,,,,,,,,Incomplete
+DummyTestRecord2,"Baseline (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord2,"Session 4 (Arm 2: Phase 2)",,,,,,,,,,,,,,,
+DummyTestRecord2,"Baseline (Arm 2: Phase 2)",PANAS-EMA,1,,"2021-06-12 08:58:17","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all",Complete
+DummyTestRecord2,"Baseline (Arm 2: Phase 2)",PANAS-EMA,2,,"2021-06-16 11:36:08","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all",Complete
+DummyTestRecord2,"Baseline (Arm 2: Phase 2)",PANAS-EMA,3,,"2021-06-16 11:48:20","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all","Very slightly or not at all",Complete
+DummyTestRecord2,"Session 4 (Arm 2: Phase 2)",PANAS-EMA,1,,"2021-06-12 11:02:03",,,,,,,,,,,Complete
+DummyTestRecord2,"Session 4 (Arm 2: Phase 2)",PANAS-EMA,2,,"2021-06-12 14:23:56",,,,,,,,,,,Complete
+DummyTestRecord2,"Session 4 (Arm 2: Phase 2)",PANAS-EMA,3,,,,,,,,,,,,,Incomplete
